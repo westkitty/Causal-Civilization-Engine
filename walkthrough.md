@@ -88,8 +88,42 @@ Original Transport Expense: 0.8400 | Counterfactual Transport Expense: 2.5200
 ===============================
 ```
 
+## 2026-07-15 UI verification closure
+
+Starting SHA `a52016e1a02fbf947501ad889f3a61d2400ca203`. This bounded pass closed
+four verification gaps left after the UI/UX polish pass, without any further
+redesign:
+
+1. Timeline markers previously labeled a ten-year event bucket as though every
+   event occurred at the bucket's first year (e.g. a Year-24 event announced "at
+   Year 20"). `src/timelines/markers.ts` now builds truthful `Years 20–29`-style
+   ranges and jumps to the true earliest recorded year in the bucket on click.
+2. The Inspector's Historical Changes section previously showed raw
+   `summaryTemplate` text with unresolved `{placeholder}` tokens. Both the
+   Inspector and the causal-path view now render through one shared
+   `src/core/eventSummary.ts` helper.
+3. Timeline playback (`currentYear` changing roughly every 150 ms) previously
+   rebuilt and resorted the entire event ledger on every render. Markers are now
+   computed once per committed baseline, in React state, not on every render.
+4. `border-cyan-400` / `border-indigo-400` — CSS classes with no stylesheet
+   backing, kept alive only so two Playwright assertions could match them — were
+   removed; the assertions now check `aria-pressed`, the semantic `is-active`
+   class, and real overlay-diagnostic state instead.
+
+Running the full suite fresh also surfaced one test defect (not an application
+regression): a Playwright locator ambiguity, since the operation-status text
+"Recompiling Causal History..." legitimately renders in two places at once (a
+header live-region summary and a status-card heading). The two affected
+assertions now target the heading role specifically instead of matching on
+plain text. The complete six-test suite then passed, uninterrupted: **6/6, 18.3
+minutes, zero page or console errors**.
+
+Full detail, unit-test evidence, and the adversarial resweep for this commit are
+recorded in `docs/FINAL_ADVERSARIAL_AUDIT.md` under "2026-07-15 UI verification
+closure amendment".
+
 ### Verification status (updated by the final adversarial audit)
-- **Playwright E2E Tests**: AVAILABLE. `@playwright/test` + Chromium are installed; the suite now defines six real-browser tests. For this UI pass, the new focused test was executed and passed end-to-end. The final aggregate sweep was intentionally stopped at the user's minimum-testing request, so no new six-test aggregate pass is claimed.
+- **Playwright E2E Tests**: AVAILABLE and PASSING. `@playwright/test` + Chromium are installed; the suite defines six real-browser tests, and the 2026-07-15 UI verification closure pass ran all six together, uninterrupted, on the final commit: 6/6 passed in 18.3 minutes with zero page or console errors. Earlier five-test and one-test evidence above remains historical, captured against earlier commits (see the audit for exact SHAs).
 - **Browser performance**: MEASURED with politics active under software WebGL (SwiftShader): ~9 FPS, ~112/168 ms avg/worst frame, 141 draw calls, 32,432 triangles, ~905 MB heap, ~107 s baseline sim. These are software-rendering figures (no GPU); 60 FPS is not claimed.
 - **SpiderMonkey & Cross-engine Hashing**: still unverified (out of scope) — determinism is claimed only for the tested local JavaScript runtime.
 - **Leak Profiling**: a bounded 30-scrub check showed 0 MB heap growth; long-run leak freedom remains unverified.

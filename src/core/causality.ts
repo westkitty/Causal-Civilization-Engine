@@ -1,5 +1,6 @@
 import type { WorldState, HistoricalEvent, ConditionEvidence, StateDelta } from "./types";
 import { CausalLedger } from "../timelines/ledger";
+import { formatEventSummary } from "./eventSummary";
 
 // ---------------------------------------------------------------------------
 // Semantic cross-branch event correlation
@@ -445,17 +446,11 @@ export function traceCausalAncestry(
 
     const pathSteps = eventIdsPath.map(id => {
       const ev = ledgerB.getEvent(id)!;
-      let summary = ev.summaryTemplate;
-      if (ev.summaryArguments) {
-        for (const key of Object.keys(ev.summaryArguments)) {
-          summary = summary.replace(`{${key}}`, String(ev.summaryArguments[key]));
-        }
-      }
       return {
         eventId: ev.eventId,
         year: ev.time.year,
         eventType: ev.eventType,
-        summary
+        summary: formatEventSummary(ev.summaryTemplate, ev.summaryArguments)
       };
     });
 

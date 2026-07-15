@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { traceCausalAncestry } from "../core/causality";
+import { formatEventSummary } from "../core/eventSummary";
 
 interface InspectorProps {
   stateA: WorldState;
@@ -286,7 +287,7 @@ export const Inspector: React.FC<InspectorProps> = ({
                   <li key={event.eventId}>
                     <span>Year {event.time.year}</span>
                     <strong>{readableEventType(event.eventType)}</strong>
-                    <p>{event.summaryTemplate || "Recorded ledger change."}</p>
+                    <p>{formatEventSummary(event.summaryTemplate, event.summaryArguments) || "Recorded ledger change."}</p>
                     <code>{event.eventId}</code>
                   </li>
                 ))}

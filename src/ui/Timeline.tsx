@@ -8,12 +8,9 @@ import {
   SkipBack,
   SkipForward,
 } from "lucide-react";
+import type { TimelineMarker } from "../timelines/markers";
 
-export interface TimelineMarker {
-  year: number;
-  count: number;
-  label: string;
-}
+export type { TimelineMarker };
 
 interface TimelineProps {
   currentYear: number;
@@ -103,20 +100,28 @@ export const Timeline: React.FC<TimelineProps> = ({
 
       <div className="timeline__track-wrap">
         <div className="timeline__markers" aria-label="Recorded event markers">
-          {markers.map((marker) => (
-            <button
-              className="timeline-marker"
-              type="button"
-              key={`${marker.year}-${marker.label}`}
-              style={{ left: `${(marker.year / maxYear) * 100}%` }}
-              onClick={() => onSetYear(marker.year)}
-              aria-label={`${marker.label} at Year ${marker.year}`}
-              title={`${marker.label} — Year ${marker.year}`}
-              disabled={disabled}
-            >
-              <span aria-hidden="true" />
-            </button>
-          ))}
+          {markers.map((marker) => {
+            const rangeText = marker.startYear === marker.endYear
+              ? `Year ${marker.startYear}`
+              : `Years ${marker.startYear}–${marker.endYear}`;
+            const countText = `${marker.count} recorded event${marker.count === 1 ? "" : "s"}`;
+            const typesText = marker.types.join(", ");
+            const tooltip = `${rangeText} · ${countText} · ${typesText} · jumps to Year ${marker.jumpYear}`;
+            return (
+              <button
+                className="timeline-marker"
+                type="button"
+                key={`${marker.startYear}-${marker.endYear}`}
+                style={{ left: `${(marker.jumpYear / maxYear) * 100}%` }}
+                onClick={() => onSetYear(marker.jumpYear)}
+                aria-label={tooltip}
+                title={tooltip}
+                disabled={disabled}
+              >
+                <span aria-hidden="true" />
+              </button>
+            );
+          })}
           {interventionYear !== undefined && (
             <button
               className="timeline-marker timeline-marker--intervention"

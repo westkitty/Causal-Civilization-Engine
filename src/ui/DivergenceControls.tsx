@@ -154,7 +154,7 @@ export const DivergenceControls: React.FC<DivergenceControlsProps> = ({
             <button
               type="button"
               key={id}
-              className={`overlay-button ${activeOverlay === id ? "is-active border-cyan-400" : ""}`}
+              className={`overlay-button ${activeOverlay === id ? "is-active" : ""}`}
               aria-pressed={activeOverlay === id}
               title={help}
               onClick={() => onChangeOverlay(id)}
@@ -193,7 +193,7 @@ export const DivergenceControls: React.FC<DivergenceControlsProps> = ({
               </button>
               <button
                 type="button"
-                className={comparisonMode === "swipe" ? "is-active border-indigo-400" : ""}
+                className={comparisonMode === "swipe" ? "is-active" : ""}
                 aria-label="Split Screen"
                 aria-pressed={comparisonMode === "swipe"}
                 onClick={() => onChangeComparisonMode("swipe")}

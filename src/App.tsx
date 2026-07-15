@@ -3,6 +3,8 @@ import type { WorldState } from "./core/types";
 import { Branch } from "./timelines/branch";
 import type { TimelineIntervention } from "./timelines/branch";
 import { CausalLedger } from "./timelines/ledger";
+import { buildTimelineMarkers } from "./timelines/markers";
+import type { TimelineMarker } from "./timelines/markers";
 import { MapViewer } from "./rendering/MapViewer";
 import { Timeline } from "./ui/Timeline";
 import { DivergenceControls } from "./ui/DivergenceControls";
@@ -12,6 +14,18 @@ import { simulateYear } from "./core/scheduler";
 import { generateWorld } from "./geography/terrain";
 import { resimulateBranch } from "./core/runner";
 import { acceptResult } from "./core/requestGuard";
+
+const NOTABLE_MARKER_EVENT_TYPES = new Set([
+  "founding",
+  "abandonment",
+  "bridge_construction",
+  "road_construction",
+  "political_founding",
+  "capital_relocation",
+  "flood",
+  "epidemic",
+  "famine",
+]);
 
 const spawnWorker = () => {
   if (typeof Worker !== "undefined") {
@@ -28,6 +42,7 @@ function App() {
   const [comparisonMode, setComparisonMode] = useState<"none" | "swipe" | "ghost" | "heat">("none");
   const [swipePosition, setSwipePosition] = useState(50);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
+  const [timelineMarkers, setTimelineMarkers] = useState<TimelineMarker[]>([]);
 
   // Simulation timeline caches
   const statesListARef = useRef<Record<number, WorldState>>({});
@@ -79,6 +94,7 @@ function App() {
 
       branchARef.current = tempBranch;
       ledgerARef.current = tempLedger;
+      setTimelineMarkers(buildTimelineMarkers(tempLedger.getAllEvents(), NOTABLE_MARKER_EVENT_TYPES));
 
       statesListBRef.current = {};
       branchBRef.current = undefined;
@@ -359,35 +375,9 @@ function App() {
     ore: "Metal ore",
     timber: "Timber",
   } as const;
-  const notableEventTypes = new Set([
-    "founding",
-    "abandonment",
-    "bridge_construction",
-    "road_construction",
-    "political_founding",
-    "capital_relocation",
-    "flood",
-    "epidemic",
-    "famine",
-  ]);
-  const markerBuckets = new Map<number, { count: number; types: Set<string> }>();
-  if (activeStateA) {
-    for (const event of ledgerARef.current.getAllEvents()) {
-      if (!notableEventTypes.has(event.eventType)) continue;
-      const bucket = Math.min(400, Math.floor(event.time.year / 10) * 10);
-      const current = markerBuckets.get(bucket) ?? { count: 0, types: new Set<string>() };
-      current.count += 1;
-      current.types.add(event.eventType.replaceAll("_", " "));
-      markerBuckets.set(bucket, current);
-    }
-  }
-  const timelineMarkers = [...markerBuckets.entries()]
-    .sort(([yearA], [yearB]) => yearA - yearB)
-    .map(([year, marker]) => ({
-      year,
-      count: marker.count,
-      label: `${marker.count} recorded event${marker.count === 1 ? "" : "s"}: ${[...marker.types].join(", ")}`,
-    }));
+  // timelineMarkers is computed once in commitBaseline (see above), not here,
+  // so playback (currentYear changing every ~150ms) never re-sorts or
+  // rebuilds the marker set. Branch (B) creation never touches it.
   const governments = activeStateA
     ? Object.values(activeStateA.governments).map((government) => ({ id: government.id, name: government.name }))
     : [];

@@ -40,7 +40,15 @@ for the full audit and evidence.
 - Politics remains deterministic across identical runs and survives both Year-0 and
   post-bootstrap counterfactual resimulation with exact pre-intervention hashes.
 
-**Real-browser verified** (Playwright, headless Chromium; five established tests plus one focused UI-polish test)
+**Real-browser verified** (Playwright, headless Chromium; 6/6 passed, 18.3 minutes,
+zero page/console errors, on the UI-verification-closure commit)
+
+Evidence below spans three separate runs at three different commits — it is not
+one aggregate pass. See `docs/FINAL_ADVERSARIAL_AUDIT.md` for the exact SHA and
+result of each: (1) five tests on the pre-politics-completion implementation,
+(2) one focused UI-polish test on the UI-polish commit, (3) the current six-test
+aggregate suite (`tests/e2e/e2e.spec.ts` + `tests/e2e/ui-polish.spec.ts`, 6/6
+passed) on the UI-verification-closure commit.
 - WebGL context initializes; terrain, rivers, settlements, roads, and the bridge
   render (verified via `renderer.info` and a scene census).
 - Counterfactual bridge suppression runs end-to-end via the real Worker, producing a

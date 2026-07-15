@@ -55,6 +55,14 @@ async function diag(page: Page): Promise<Diag> {
   return page.evaluate(() => (window as unknown as { __cceDiag: () => Diag }).__cceDiag());
 }
 
+// The "Recompiling Causal History..." text renders in two places at once (a
+// live-region status summary in the header and this operation-status card
+// heading), so a plain text= locator is ambiguous under Playwright strict
+// mode. The heading is the dedicated, single-purpose status surface.
+function branchRecompileHeading(page: Page) {
+  return page.getByRole("heading", { name: /Recompiling Causal History/ });
+}
+
 async function politicsAt(
   page: Page,
   year: number,
@@ -121,7 +129,9 @@ test("baseline renders real WebGL content and supports core interactions", async
   // 6. Overlays change state.
   const political = page.getByRole("button", { name: /Political/ });
   await political.click();
-  await expect(political).toHaveClass(/cyan-400/);
+  await expect(political).toHaveAttribute("aria-pressed", "true");
+  await expect(political).toHaveClass(/is-active/);
+  expect((await diag(page)).activeOverlay).toBe("politics");
 
   // 7. Play advances time; pause stops it.
   await setYear(page, 0);
@@ -173,24 +183,25 @@ test("counterfactual suppression produces a diverged branch and comparison view"
   await suppress.click();
 
   // Worker progress is visible while the branch resimulates.
-  await expect(page.locator("text=Recompiling Causal History")).toBeVisible();
+  await expect(branchRecompileHeading(page)).toBeVisible();
   const progressValues = new Set<string>();
   for (let i = 0; i < 30; i++) {
     const t = await page.locator("text=/Progress: \\d+%/").textContent().catch(() => null);
     if (t) progressValues.add(t);
-    if (await page.locator("text=Recompiling Causal History").isHidden().catch(() => false)) break;
+    if (await branchRecompileHeading(page).isHidden().catch(() => false)) break;
     await page.waitForTimeout(1000);
   }
   // The branch resimulation (~390 years) runs far slower on 2-core CI runners:
   // the main thread holds the ~800 MB baseline cache while the Worker builds a
   // second one and structured-clones 400 states back across the boundary.
-  await expect(page.locator("text=Recompiling Causal History")).toBeHidden({ timeout: 360_000 });
+  await expect(branchRecompileHeading(page)).toBeHidden({ timeout: 360_000 });
   expect(progressValues.size).toBeGreaterThan(1); // progress actually changed
 
   // Branch tag updated; split-screen comparison active.
   await expect(page.locator("text=suppress_bridge_branch").first()).toBeVisible();
   const split = page.getByRole("button", { name: "Split Screen" });
-  await expect(split).toHaveClass(/indigo-400/);
+  await expect(split).toHaveAttribute("aria-pressed", "true");
+  await expect(split).toHaveClass(/is-active/);
 
   // Comparison divider changes the scissor boundary without error.
   const divider = page.getByLabel("Comparison divider");
@@ -230,7 +241,8 @@ test("politics initializes, renders real control data, and survives branch resim
 
   const political = page.getByRole("button", { name: /Political/ });
   await political.click();
-  await expect(political).toHaveClass(/cyan-400/);
+  await expect(political).toHaveAttribute("aria-pressed", "true");
+  await expect(political).toHaveClass(/is-active/);
   await page.waitForTimeout(300);
   const politicalRender = await diag(page);
   expect(politicalRender.activeOverlay).toBe("politics");
@@ -246,7 +258,7 @@ test("politics initializes, renders real control data, and survives branch resim
   const suppress = page.getByRole("button", { name: /Suppress Bridge Construction/ });
   await expect(suppress).toBeVisible();
   await suppress.click();
-  await expect(page.locator("text=Recompiling Causal History")).toBeHidden({ timeout: 360_000 });
+  await expect(branchRecompileHeading(page)).toBeHidden({ timeout: 360_000 });
   await expect(page.locator("text=suppress_bridge_branch").first()).toBeVisible();
 
   const branchPrefix = await politicsAt(page, 9, "suppress_bridge_branch");

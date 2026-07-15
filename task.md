@@ -77,6 +77,14 @@
   - `[x]` Replace external font requests/default favicon with local typography and one original branching-terrain SVG mark
   - `[x]` Add focused Worker-backed Playwright UI verification and direct before/after screenshot review
 
+- `[x]` **Phase 16: UI verification closure** (see `docs/FINAL_ADVERSARIAL_AUDIT.md`, 2026-07-15 amendment)
+  - `[x]` Timeline markers report a truthful `startYear`–`endYear` range and `jumpYear` (true earliest event year) instead of implying every aggregated event occurred at the bucket start
+  - `[x]` Inspector and causal-path summaries render through one shared `formatEventSummary` helper instead of showing raw `{placeholder}` tokens
+  - `[x]` Timeline markers are computed once per committed baseline (in state), not rebuilt/resorted on every `currentYear` render during playback
+  - `[x]` Removed obsolete `border-cyan-400`/`border-indigo-400` test-only classes; browser assertions now check `aria-pressed`/`is-active`/real diagnostic state
+  - `[x]` Fixed a Playwright locator ambiguity found while running the full suite fresh (not an application regression)
+  - `[x]` Ran the complete six-test Playwright suite uninterrupted on the final commit: 6/6 passed, 18.3 minutes, zero page/console errors
+
 ## Legend
 
 `[x]` implemented and verified at the stated level · `[deferred]` recorded, not done (rationale in the audit).

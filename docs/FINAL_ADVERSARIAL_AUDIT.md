@@ -438,3 +438,108 @@ No new Critical or High application defects survived the resweep.
   not represented as a fresh full-suite pass. The prior five-test evidence above
   remains historical evidence, and the focused UI test is the current UI acceptance
   gate.
+
+### 2026-07-15 UI verification closure amendment
+
+Starting SHA for this pass: `a52016e1a02fbf947501ad889f3a61d2400ca203` (the UI-polish
+commit). Working tree clean at start; lint 0/0, Vitest 56/56, build succeeded before
+any change (Phase 0 ground truth for this closure pass).
+
+**Newly found and fixed defects (not previously documented):**
+
+- **Timeline-marker semantics defect** — `App.tsx` grouped ledger events into
+  ten-year buckets keyed by the bucket's first year, then labeled and positioned
+  the marker as though every aggregated event occurred exactly at that year (e.g.
+  a Year-24 event announced as "at Year 20"). Corrected by extracting a pure
+  `buildTimelineMarkers` helper (`src/timelines/markers.ts`) that reports
+  `startYear`/`endYear`/`jumpYear`/`count`/`types` and renders a truthful
+  `Years 20–29` range; clicking or activating a marker now jumps to the true
+  earliest recorded event year (`jumpYear`), not the bucket start. Year 400 is
+  clamped to a `400–400` (not `400–409`) single-year bucket. Unit tests in
+  `src/__tests__/timelineMarkers.test.ts` cover bucketing, jump-year truthfulness,
+  deterministic multi-type aggregation regardless of input order, the Year-400
+  edge case, and the empty-ledger case.
+- **Unrendered summary-template defect** — `Inspector.tsx`'s Historical Changes
+  section displayed `event.summaryTemplate` verbatim, so placeholders such as
+  `{name}` or `{delta}` were visible to the user unexpanded. `traceCausalAncestry`
+  in `src/core/causality.ts` had independently reimplemented ad-hoc placeholder
+  substitution for the causal-path view. Both call sites now use one shared
+  `formatEventSummary` helper (`src/core/eventSummary.ts`) that substitutes from
+  `summaryArguments`, preserves numeric `0`, `false`, and empty-string values,
+  leaves an unresolved placeholder visible (documented policy) rather than
+  throwing or silently deleting it on a missing argument, and never uses `eval`
+  or unsafe HTML. Raw event IDs remain separately visible in the Inspector for
+  technical evidence. Unit tests in `src/__tests__/eventSummary.test.ts` cover
+  normal/multiple interpolation, zero, `false`, missing arguments, no-argument
+  templates, and empty/absent templates.
+- **Per-render ledger resort** — the L3 finding above ("`CausalLedger.getAllEvents()`
+  sorts on each call... deferred") remained technically true of the method itself,
+  but its practical impact was that `App.tsx` called `getAllEvents()` and rebuilt
+  the entire marker set on every render, including every `currentYear` change
+  during playback (~every 150 ms). Timeline markers are now computed once, inside
+  `commitBaseline`, and stored in React state (`timelineMarkers`), so they update
+  only when a new seed or newly committed baseline replaces `ledgerARef.current`.
+  Branch (B) creation never touches `ledgerARef`, so it leaves baseline markers
+  untouched, matching the requirement that branch creation not rebuild them.
+- **Obsolete utility-class test hooks** — `border-cyan-400` and `border-indigo-400`
+  in `DivergenceControls.tsx` had no backing CSS (confirmed by a repository-wide
+  search of `src/index.css`) and existed only so that `tests/e2e/e2e.spec.ts`
+  could assert `toHaveClass(/cyan-400/)` / `toHaveClass(/indigo-400/)`. Both classes
+  were removed; the three affected Playwright assertions now check
+  `aria-pressed="true"`, the semantic `is-active` class, and (for the Political
+  overlay) the real `activeOverlay` diagnostic from `__cceDiag()` — behavior, not
+  an implementation-detail class name.
+
+**Defect found and fixed while running the fresh full suite (not previously
+documented):** the first full six-test run under this closure pass surfaced 2
+failures — a Playwright strict-mode violation, not an application regression.
+`App.tsx`'s operation-status card renders `operationTitle` ("Recompiling Causal
+History...") in two places at once: a live-region summary in the header
+(`<strong aria-live="polite">`) and a dedicated `<h2>` heading in the status
+card. Both existed before this closure pass; the plain-text locator
+`page.locator("text=Recompiling Causal History")` in
+`tests/e2e/e2e.spec.ts` (used by the "counterfactual suppression..." and
+"politics initializes..." tests) became ambiguous once both elements were
+present, which Playwright's strict mode correctly rejects rather than guessing.
+Corrected by adding a `branchRecompileHeading(page)` helper that targets the
+`<h2>` via `getByRole("heading", ...)` — the single-purpose status surface —
+instead of loosening the assertion or raising a timeout. Re-run of just the two
+affected tests then passed (3.9m, 4.1m); the complete six-test suite was then
+re-run once more, uninterrupted, for the official record below.
+
+**Adversarial resweep — real-browser manual verification (dev server, this
+closure pass, beyond what the automated suites cover):**
+- Timeline markers rendered by the real baseline simulation (seed
+  `bridge-emergence-001`) showed truthful ranges end-to-end, e.g. `"Years
+  190–199 · 1 recorded event · epidemic · jumps to Year 198"` — never claiming
+  the event occurred at Year 190. Clicking that marker moved `currentYear` to
+  `198`, confirmed by reading the live DOM (`Year 198`), not the bucket start.
+- All ten real markers produced by the standard seed measured a 44×44 CSS-pixel
+  hit target and `disabled: false`, confirmed via `getBoundingClientRect()`.
+- Selecting a real settlement (`settlement_5045`) and expanding Historical
+  Changes rendered twelve fully-interpolated summaries (e.g. *"Wealth of
+  Crossroads 1 reduced by 24456 due to tax collection."*) with zero raw
+  `{placeholder}` tokens visible anywhere in the list.
+- No horizontal overflow at a 375px mobile viewport; zero console errors
+  throughout the session.
+- Native `<button type="button">` keyboard semantics (Enter/Space activating a
+  focused button) are unmodified by this pass — `Timeline.tsx` registers no
+  `onKeyDown`/`onKeyUp` handler on the marker buttons or their container, only
+  `onClick`, so activation is delegated entirely to browser-native behavior.
+  A JS-dispatched synthetic `KeyboardEvent("Enter")` does not trigger a browser's
+  native button activation (a documented cross-browser restriction: only
+  trusted, OS-level key events do), so this could not be exercised end-to-end
+  through this particular preview tool's key-dispatch path; the CDP-driven,
+  trusted-event Playwright suite's keyboard/focus assertions (part of the
+  passing `ui-polish.spec.ts` run below) is the authoritative check for this
+  behavior, and this pass changed nothing that could regress it.
+- No further Critical, High, Blocker, or Major finding survived this resweep.
+
+**Full six-test aggregate Playwright result for this closure pass's final commit**
+(`a52016e1a02fbf947501ad889f3a61d2400ca203` plus this pass's changes, prior to
+the closure commit below): **6 passed, 0 failed, 18.3 minutes total**, headless
+Chromium, real Worker, zero page errors and zero console errors across all six
+tests (verified by each test's own error-collector assertions, all of which
+passed). Do not treat the pre-closure "5 passed" / "1 passed" entries above as
+evidence for this commit — they were captured against earlier commits, named
+explicitly by SHA where recorded.
