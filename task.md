@@ -12,21 +12,21 @@
 - `[x]` **Phase 4: Audit Economic Correctness**
   - `[x]` Constrain transaction volume by buyer wealth in `src/simulation/economy.ts`
   - `[x]` Enforce route capacity limits during allocation
-  - `[x]` Reconcile wealth changes exactly, tracking transport expense as drag/consumption
+  - `[x]` Transaction reconciliation: verify wealth conservation with transport drag as expense term
   - `[x]` Record transient reconciliation diagnostics (`__transientReconciliation`)
 - `[x]` **Phase 5: Verify Causal Ancestry Honestly**
   - `[x]` Record suppression parent event IDs in `src/simulation/transport.ts`
-  - `[x]` Implement `traceCausalAncestry` in `src/ui/Inspector.tsx`
+  - `[x]` Implement `traceCausalAncestry` in `src/core/causality.ts`
   - `[x]` Add negative test asserting unresolved status for unconnected differences
-- `[x]` **Phase 6: Real-Browser Verification**
+- `[ ]` **Phase 6: Real-Browser Verification**
   - `[x]` Create Playwright acceptance test in `tests/e2e/e2e.spec.ts`
-  - `[x]` Run real-browser E2E suite (unverified on agent sandbox, code prepared for local execution)
+  - `[ ]` Run real-browser E2E suite (code prepared, execution unverified)
 - `[x]` **Phase 7 & 8: Move Simulation to Web Worker**
   - `[x]` Measure main-thread blocking of simulation
   - `[x]` Implement ES-module Web Worker in `src/core/simulation.worker.ts`
   - `[x]` Integrate Worker thread with React `App.tsx` and fallback to synchronous mode in Node/JSDOM
-- `[x]` **Phase 9: Performance Instrumentation**
-  - `[x]` Record bundles, render times, frames, draw calls, triangles, and heap metrics
+- `[ ]` **Phase 9: Performance Instrumentation**
+  - `[ ]` Record bundles, render times, frames, draw calls, triangles, and heap metrics (unverified against live rendering)
 - `[x]` **Phase 10 & 11: Clean Repository and Correct Documentation**
   - `[x]` Move diagnostics out of `src/` to `scripts/`
   - `[x]` Create and polish `task.md` and `walkthrough.md` in the project root
@@ -34,9 +34,15 @@
   - `[x]` Throw error on duplicate causal event ID in `CausalLedger.addEvent`
   - `[x]` Prevent event ID collisions by making econ, bridge, and tax events counterparty-specific
   - `[x]` Make causal ancestry tracing branch-aware and field-specific in `traceCausalAncestry`
-  - `[x]` Implement Dijkstra road capacity skipping to allow routing around capacity bottlenecks
+    - `[x]` Delta comparison for causal event effects (compare after−before, not absolute values)
+    - `[x]` Cycle detection via DFS with visiting/visited states
+    - `[x]` Chronology violation detection (parent.year > child.year)
+    - `[x]` Missing intervention ID returns unresolved without throwing
+  - `[x]` Dynamic residual-capacity routing via Dijkstra (skip zero-residual edges, re-route dynamically)
+  - `[x]` Semantic infrastructure-parent lookup by exact entity ID (no prefix matching)
   - `[x]` Add exhaustive assertions verifying 5-stage chronological signature causal chain
-  - `[x]` Verify buyer/seller wealth changes and transport drag double-entry math conservation
+  - `[x]` Verify transaction reconciliation: buyer/seller wealth conservation with transport drag
+  - `[x]` Remove seed-based suppression (no `state.seed === "suppressed"` magic)
 
 ## Repository completion rule
 

@@ -1,4 +1,4 @@
-import type { WorldState } from "./types";
+import type { WorldState, HistoricalEvent } from "./types";
 import { CausalLedger } from "../timelines/ledger";
 
 export interface CausalChainStep {
@@ -24,6 +24,81 @@ export interface CausalAncestryResult {
   missingEventIds: string[];
   path: CausalChainStep[];
   confidence: number;
+  cycleEventIds?: string[];
+  chronologyViolations?: Array<{
+    parentEventId: string;
+    parentYear: number;
+    childEventId: string;
+    childYear: number;
+  }>;
+}
+
+function eventsDiffer(
+  evB: HistoricalEvent,
+  evA: HistoricalEvent,
+  entityId: string,
+  field: string,
+  interventionEventId: string
+): boolean {
+  if (evB.ruleId !== evA.ruleId) return true;
+  if (evB.eventType !== evA.eventType) return true;
+
+  const parentsB = evB.parentEventIds.filter(id => id !== interventionEventId);
+  const parentsA = evA.parentEventIds.filter(id => id !== interventionEventId);
+  if (parentsB.join(",") !== parentsA.join(",")) return true;
+
+  // Compare location
+  if (evB.location.cellId !== evA.location.cellId ||
+      evB.location.routeEdgeId !== evA.location.routeEdgeId ||
+      evB.location.settlementId !== evA.location.settlementId) {
+    return true;
+  }
+
+  // Compare actors & affected entities
+  if (evB.actorIds.join(",") !== evA.actorIds.join(",")) return true;
+  if (evB.affectedEntityIds.join(",") !== evA.affectedEntityIds.join(",")) return true;
+
+  // Compare immediateEffects
+  const effB = evB.immediateEffects.find(eff => eff.entityId === entityId && eff.field === field);
+  const effA = evA.immediateEffects.find(eff => eff.entityId === entityId && eff.field === field);
+  if (effB || effA) {
+    if (!effB || !effA) return true;
+    if (typeof effB.before === "number" && typeof effB.after === "number" &&
+        typeof effA.before === "number" && typeof effA.after === "number") {
+      const deltaB = effB.after - effB.before;
+      const deltaA = effA.after - effA.before;
+      if (Math.abs(deltaB - deltaA) > 1e-6) return true;
+    } else {
+      if (effB.before !== effA.before || effB.after !== effA.after) return true;
+    }
+  }
+
+  // Compare conditions (mechanism inputs)
+  for (const condB of evB.conditions) {
+    const condA = evA.conditions.find(c => c.predicateType === condB.predicateType) ||
+                  evA.conditions.find(c => c.conditionId === condB.conditionId);
+    if (!condA) return true;
+
+    for (const obsB of condB.observed) {
+      const obsA = condA.observed.find(o => o.name === obsB.name);
+      if (!obsA) return true;
+      if (Math.abs(obsB.value - obsA.value) > 1e-6) return true;
+    }
+  }
+
+  // Compare summaryArguments
+  const allKeys = new Set([...Object.keys(evB.summaryArguments || {}), ...Object.keys(evA.summaryArguments || {})]);
+  for (const key of allKeys) {
+    const valB = evB.summaryArguments?.[key];
+    const valA = evA.summaryArguments?.[key];
+    if (typeof valB === "number" && typeof valA === "number") {
+      if (Math.abs(valB - valA) > 1e-6) return true;
+    } else {
+      if (String(valB) !== String(valA)) return true;
+    }
+  }
+
+  return false;
 }
 
 export function traceCausalAncestry(
@@ -40,11 +115,27 @@ export function traceCausalAncestry(
       eventIds: [],
       missingEventIds: [],
       path: [],
-      confidence: 0
+      confidence: 0,
+      cycleEventIds: [],
+      chronologyViolations: []
     };
   }
 
-  // 1. Confirm the selected field actually differs between states
+  // 1. Require that intervention exists and eventType === "timeline_intervention"
+  const intervEvent = ledgerB.getEvent(interventionEventId);
+  if (!intervEvent || intervEvent.eventType !== "timeline_intervention") {
+    return {
+      status: "unresolved_ancestry",
+      eventIds: [],
+      missingEventIds: [interventionEventId],
+      path: [],
+      confidence: 0,
+      cycleEventIds: [],
+      chronologyViolations: []
+    };
+  }
+
+  // 2. Confirm the selected field actually differs between states
   const getEntityValue = (state: WorldState, entId: string, fld: string): any => {
     if (state.bridges[entId]) return state.bridges[entId][fld as keyof typeof state.bridges[string]];
     if (state.routes[entId]) return state.routes[entId][fld as keyof typeof state.routes[string]];
@@ -62,7 +153,9 @@ export function traceCausalAncestry(
       eventIds: [],
       missingEventIds: [],
       path: [],
-      confidence: 1.0
+      confidence: 1.0,
+      cycleEventIds: [],
+      chronologyViolations: []
     };
   }
 
@@ -85,11 +178,13 @@ export function traceCausalAncestry(
       eventIds: [],
       missingEventIds: [],
       path: [],
-      confidence: 1.0
+      confidence: 1.0,
+      cycleEventIds: [],
+      chronologyViolations: []
     };
   }
 
-  // 2. Identify focal branch events in ledgerB whose immediateEffects modify that exact entity and field
+  // 3. Identify focal branch events in ledgerB whose immediateEffects modify that exact entity and field
   let focalEvents = ledgerB.getAllEvents().filter(e =>
     e.immediateEffects.some(eff => eff.entityId === entityId && eff.field === field)
   );
@@ -97,21 +192,13 @@ export function traceCausalAncestry(
   // Filter to keep only branch-specific or quantitatively different ones compared to ledgerA
   focalEvents = focalEvents.filter(evB => {
     const evA = ledgerA.getEvent(evB.eventId);
-    if (!evA) {
-      // Branch-specific event
-      return true;
-    }
-    // Check if the immediateEffect for entityId and field differs quantitatively
-    const effB = evB.immediateEffects.find(eff => eff.entityId === entityId && eff.field === field);
-    const effA = evA.immediateEffects.find(eff => eff.entityId === entityId && eff.field === field);
-    if (!effA || !effB) return true;
-    return effB.before !== effA.before || effB.after !== effA.after;
+    if (!evA) return true;
+    return eventsDiffer(evB, evA, entityId, field, interventionEventId);
   });
 
   // Fallback for suppressed entities
   if (focalEvents.length === 0 && hasEntityA && !hasEntityB) {
-    const intervEvent = ledgerB.getEvent(interventionEventId);
-    if (intervEvent && intervEvent.affectedEntityIds.includes(entityId)) {
+    if (intervEvent.affectedEntityIds.includes(entityId)) {
       focalEvents.push(intervEvent);
     }
   }
@@ -122,43 +209,97 @@ export function traceCausalAncestry(
       eventIds: [],
       missingEventIds: [],
       path: [],
-      confidence: 0
+      confidence: 0,
+      cycleEventIds: [],
+      chronologyViolations: []
     };
   }
 
-  // 3. BFS search from focal events back to the intervention
-  const visited = new Set<string>();
-  const cameFrom: Record<string, string> = {}; // parentId -> childId
-  const queue: string[] = focalEvents.map(e => e.eventId);
-  let reachedIntervention = false;
+  // 4. Trace graph for cycles, chronology violations, and missing events
   const missingEvents = new Set<string>();
+  const cycleEventIds = new Set<string>();
+  const chronologyViolations: Array<{
+    parentEventId: string;
+    parentYear: number;
+    childEventId: string;
+    childYear: number;
+  }> = [];
 
-  while (queue.length > 0) {
-    const currId = queue.shift()!;
-    if (visited.has(currId)) continue;
-    visited.add(currId);
+  const visitedState = new Map<string, "visiting" | "visited">();
 
-    if (currId === interventionEventId) {
-      reachedIntervention = true;
-      break;
-    }
+  function dfs(currId: string) {
+    visitedState.set(currId, "visiting");
 
-    const currEvent = ledgerB.getEvent(currId);
+    const currEvent = ledgerB!.getEvent(currId);
     if (!currEvent) {
       missingEvents.add(currId);
-      continue;
+      visitedState.set(currId, "visited");
+      return;
     }
 
     for (const parentId of currEvent.parentEventIds) {
-      if (!visited.has(parentId) && !queue.includes(parentId)) {
+      const parentEvent = ledgerB!.getEvent(parentId);
+      if (parentEvent) {
+        if (parentEvent.time.year > currEvent.time.year) {
+          chronologyViolations.push({
+            parentEventId: parentId,
+            parentYear: parentEvent.time.year,
+            childEventId: currId,
+            childYear: currEvent.time.year
+          });
+        }
+      } else {
+        missingEvents.add(parentId);
+      }
+
+      const pState = visitedState.get(parentId);
+      if (pState === "visiting") {
+        cycleEventIds.add(parentId);
+        cycleEventIds.add(currId);
+      } else if (!pState) {
+        dfs(parentId);
+      }
+    }
+
+    visitedState.set(currId, "visited");
+  }
+
+  for (const focal of focalEvents) {
+    if (!visitedState.has(focal.eventId)) {
+      dfs(focal.eventId);
+    }
+  }
+
+  // 5. BFS search from focal events back to the intervention
+  const queue: string[] = focalEvents.map(e => e.eventId);
+  const bfsVisited = new Set<string>();
+  const cameFrom: Record<string, string> = {}; // parentId -> childId
+  let reachedIntervention = false;
+
+  while (queue.length > 0) {
+    const currId = queue.shift()!;
+    if (bfsVisited.has(currId)) continue;
+    bfsVisited.add(currId);
+
+    if (currId === interventionEventId) {
+      reachedIntervention = true;
+    }
+
+    const currEvent = ledgerB.getEvent(currId);
+    if (!currEvent) continue;
+
+    for (const parentId of currEvent.parentEventIds) {
+      if (!bfsVisited.has(parentId) && !queue.includes(parentId)) {
         cameFrom[parentId] = currId;
         queue.push(parentId);
       }
     }
   }
 
-  if (reachedIntervention && missingEvents.size === 0) {
-    // Reconstruct path from interventionEventId to focal event
+  const hasErrors = missingEvents.size > 0 || cycleEventIds.size > 0 || chronologyViolations.length > 0;
+
+  if (reachedIntervention && !hasErrors) {
+    // Reconstruct chronological path from intervention to focal event
     const eventIdsPath: string[] = [];
     let curr: string | undefined = interventionEventId;
     while (curr) {
@@ -187,15 +328,19 @@ export function traceCausalAncestry(
       eventIds: eventIdsPath,
       missingEventIds: [],
       path: pathSteps,
-      confidence: 1.0
+      confidence: 1.0,
+      cycleEventIds: [],
+      chronologyViolations: []
     };
   }
 
   return {
     status: "unresolved_ancestry",
-    eventIds: Array.from(visited),
+    eventIds: Array.from(bfsVisited),
     missingEventIds: Array.from(missingEvents),
     path: [],
-    confidence: missingEvents.size > 0 ? 0.0 : 0.2
+    confidence: missingEvents.size > 0 ? 0.0 : 0.2,
+    cycleEventIds: Array.from(cycleEventIds),
+    chronologyViolations
   };
 }

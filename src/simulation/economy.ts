@@ -1,4 +1,4 @@
-import type { WorldState, ResolvedTransportPath } from "../core/types";
+import type { WorldState, ResolvedTransportPath, HistoricalEvent } from "../core/types";
 import { CausalLedger } from "../timelines/ledger";
 import { findShortestPath } from "./transport";
 
@@ -6,10 +6,35 @@ function isRiverCell(state: WorldState, idx: number): boolean {
   return state.flowAccumulation[idx] > 500;
 }
 
+export function findEligibleInfrastructureEvent(
+  events: HistoricalEvent[],
+  eventType: string,
+  entityId: string,
+  maxYear: number
+): HistoricalEvent | undefined {
+  const eligible = events.filter(e =>
+    e.eventType === eventType &&
+    e.affectedEntityIds.includes(entityId) &&
+    e.time.year <= maxYear
+  );
+  if (eligible.length === 0) return undefined;
+  return eligible.sort((a, b) => b.time.year - a.time.year || b.eventId.localeCompare(a.eventId))[0];
+}
+
+export function findInfrastructureEvent(
+  events: HistoricalEvent[],
+  eventType: string,
+  entityId: string,
+  maxYear: number
+): HistoricalEvent | undefined {
+  return findEligibleInfrastructureEvent(events, eventType, entityId, maxYear);
+}
+
 export function resolveTransportPath(
   state: WorldState,
   sellerId: string,
-  buyerId: string
+  buyerId: string,
+  usedCapacity?: Record<string, number>
 ): ResolvedTransportPath | null {
   const width = state.mapWidth;
   const seller = state.settlements[sellerId];
@@ -17,7 +42,6 @@ export function resolveTransportPath(
   if (!seller || !buyer) return null;
 
   // 1. Try to find path on road network
-  // Build adjacency list for settlements connected by routes
   const cellToSetId: Record<number, string> = {};
   for (const sId of Object.keys(state.settlements)) {
     cellToSetId[state.settlements[sId].cellId] = sId;
@@ -42,8 +66,12 @@ export function resolveTransportPath(
     const sStart = cellToSetId[pStart];
     const sEnd = cellToSetId[pEnd];
     if (sStart && sEnd) {
-      adj[sStart].push({ toId: sEnd, routeId: rId, travelTime: route.travelTime, capacity: route.capacity });
-      adj[sEnd].push({ toId: sStart, routeId: rId, travelTime: route.travelTime, capacity: route.capacity });
+      const currentUsage = usedCapacity ? (usedCapacity[rId] || 0) : 0;
+      const residual = route.capacity - currentUsage;
+      if (residual > 0) {
+        adj[sStart].push({ toId: sEnd, routeId: rId, travelTime: route.travelTime, capacity: residual });
+        adj[sEnd].push({ toId: sStart, routeId: rId, travelTime: route.travelTime, capacity: residual });
+      }
     }
   }
 
@@ -95,7 +123,9 @@ export function resolveTransportPath(
       edgeIds.push(step.routeId);
       const route = state.routes[step.routeId];
       if (route) {
-        minCapacity = Math.min(minCapacity, route.capacity);
+        const currentUsage = usedCapacity ? (usedCapacity[step.routeId] || 0) : 0;
+        const residual = route.capacity - currentUsage;
+        minCapacity = Math.min(minCapacity, residual);
         
         let effectiveTravelTime = route.travelTime;
         const bridge = Object.values(state.bridges).find(b => b.routeEdgeId === step.routeId);
@@ -269,35 +299,50 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
 
     if (sellers.length === 0 || buyers.length === 0) continue;
 
-    // Build trade candidate pairs
-    const pairs: { sellerId: string; buyerId: string; path: ResolvedTransportPath }[] = [];
+    const exhaustedPairs = new Set<string>();
+    let tradeCounter = 0;
 
-    for (const sellerId of sellers) {
-      for (const buyerId of buyers) {
-        const path = resolveTransportPath(state, sellerId, buyerId);
-        if (path) {
-          pairs.push({ sellerId, buyerId, path });
+    while (true) {
+      const activeSellers = sellers.filter(id => surplus[id][good] > 0);
+      const activeBuyers = buyers.filter(id => deficit[id][good] > 0);
+      if (activeSellers.length === 0 || activeBuyers.length === 0) break;
+
+      // Build trade candidate pairs by resolving them dynamically using current usedCapacity
+      const pairs: { sellerId: string; buyerId: string; path: ResolvedTransportPath }[] = [];
+
+      for (const sellerId of activeSellers) {
+        for (const buyerId of activeBuyers) {
+          const pairKey = `${sellerId}_${buyerId}`;
+          if (exhaustedPairs.has(pairKey)) continue;
+
+          const path = resolveTransportPath(state, sellerId, buyerId, usedCapacity);
+          if (path) {
+            pairs.push({ sellerId, buyerId, path });
+          }
         }
       }
-    }
 
-    // Sort trade pairs by travel time (lowest cost first)
-    pairs.sort((a, b) => a.path.totalTravelTime - b.path.totalTravelTime);
+      if (pairs.length === 0) break;
 
-    // Allocate flows
-    for (const pair of pairs) {
-      const seller = state.settlements[pair.sellerId];
-      const buyer = state.settlements[pair.buyerId];
+      // Sort trade pairs by travel time (lowest cost first)
+      pairs.sort((a, b) => {
+        const timeDiff = a.path.totalTravelTime - b.path.totalTravelTime;
+        if (Math.abs(timeDiff) > 1e-6) return timeDiff;
+        if (a.sellerId !== b.sellerId) return a.sellerId.localeCompare(b.sellerId);
+        return a.buyerId.localeCompare(b.buyerId);
+      });
 
-      const sellAvail = surplus[pair.sellerId][good];
-      const buyNeeded = deficit[pair.buyerId][good];
+      const bestPair = pairs[0];
+      const seller = state.settlements[bestPair.sellerId];
+      const buyer = state.settlements[bestPair.buyerId];
 
-      if (sellAvail <= 0 || buyNeeded <= 0) continue;
+      const sellAvail = surplus[bestPair.sellerId][good];
+      const buyNeeded = deficit[bestPair.buyerId][good];
 
       // Check route capacity constraint
-      let routeLimit = pair.path.residualCapacity;
-      if (pair.path.mode === "network") {
-        for (const edgeId of pair.path.edgeIds) {
+      let routeLimit = bestPair.path.residualCapacity;
+      if (bestPair.path.mode === "network") {
+        for (const edgeId of bestPair.path.edgeIds) {
           const currentUsage = usedCapacity[edgeId] || 0;
           const route = state.routes[edgeId];
           if (route) {
@@ -307,20 +352,23 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
       }
 
       // Local price with distance markup
-      const localPrice = basePrice * (1.0 + pair.path.totalTravelTime * 0.05);
+      const localPrice = basePrice * (1.0 + bestPair.path.totalTravelTime * 0.05);
 
       // Enforce buyer wealth capacity
       const maxAffordableVolume = localPrice > 0 ? buyer.wealth / localPrice : Infinity;
 
       const tradeVolume = Math.min(sellAvail, buyNeeded, maxAffordableVolume, routeLimit);
-      if (tradeVolume <= 0) continue;
+      if (tradeVolume <= 0) {
+        exhaustedPairs.add(`${bestPair.sellerId}_${bestPair.buyerId}`);
+        continue;
+      }
 
       // Apply transaction
-      surplus[pair.sellerId][good] -= tradeVolume;
-      deficit[pair.buyerId][good] -= tradeVolume;
+      surplus[bestPair.sellerId][good] -= tradeVolume;
+      deficit[bestPair.buyerId][good] -= tradeVolume;
 
-      if (pair.path.mode === "network") {
-        for (const edgeId of pair.path.edgeIds) {
+      if (bestPair.path.mode === "network") {
+        for (const edgeId of bestPair.path.edgeIds) {
           usedCapacity[edgeId] = (usedCapacity[edgeId] || 0) + tradeVolume;
         }
       }
@@ -356,35 +404,37 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
       // --- EMIT LEDGER EVENTS ---
       // A. Path resolved
       const bridgeParentIds: string[] = [];
-      for (const bId of pair.path.crossingAssetIds) {
-        const foundBuild = Object.keys(ledger.events).find(k => k.startsWith(`build_bridge_${bId}`));
+      const ledgerEvents = ledger.getAllEvents();
+
+      for (const bId of bestPair.path.crossingAssetIds) {
+        const foundBuild = findEligibleInfrastructureEvent(ledgerEvents, "bridge_construction", bId, year);
         if (foundBuild) {
-          bridgeParentIds.push(foundBuild);
+          bridgeParentIds.push(foundBuild.eventId);
         }
       }
-      for (const rId of pair.path.edgeIds) {
-        const foundBuild = Object.keys(ledger.events).find(k => k.startsWith(`build_road_${rId}`));
+      for (const rId of bestPair.path.edgeIds) {
+        const foundBuild = findEligibleInfrastructureEvent(ledgerEvents, "road_construction", rId, year);
         if (foundBuild) {
-          bridgeParentIds.push(foundBuild);
+          bridgeParentIds.push(foundBuild.eventId);
         }
       }
 
-      const pathResolvedEventId = `path_resolve_${pair.sellerId}_to_${pair.buyerId}_${good}_${year}`;
+      const pathResolvedEventId = `path_resolve_${bestPair.sellerId}_to_${bestPair.buyerId}_${good}_${year}_${tradeCounter}`;
       ledger.addEvent({
         eventId: pathResolvedEventId,
         time: { year },
         eventType: "transport_path_resolved",
         location: { cellId: seller.cellId },
-        actorIds: [pair.sellerId, pair.buyerId],
-        affectedEntityIds: [...pair.path.edgeIds, ...pair.path.crossingAssetIds],
+        actorIds: [bestPair.sellerId, bestPair.buyerId],
+        affectedEntityIds: [...bestPair.path.edgeIds, ...bestPair.path.crossingAssetIds],
         conditions: [
           {
             conditionId: `path_cond_${pathResolvedEventId}`,
             predicateType: "path_mode",
-            subjectIds: [pair.sellerId, pair.buyerId],
+            subjectIds: [bestPair.sellerId, bestPair.buyerId],
             observed: [
-              { name: "totalTravelTime", value: pair.path.totalTravelTime },
-              { name: "residualCapacity", value: pair.path.residualCapacity }
+              { name: "totalTravelTime", value: bestPair.path.totalTravelTime },
+              { name: "residualCapacity", value: bestPair.path.residualCapacity }
             ],
             result: true,
             role: "necessary",
@@ -397,24 +447,24 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
         resultingEventIds: [],
         ruleId: "transport_routing",
         summaryTemplate: "Transport path resolved from {sellerName} to {buyerName} via {mode} mode.",
-        summaryArguments: { sellerName: seller.name, buyerName: buyer.name, mode: pair.path.mode },
+        summaryArguments: { sellerName: seller.name, buyerName: buyer.name, mode: bestPair.path.mode },
         confidence: 1.0,
       });
 
       // B. Trade allocation
-      const tradeAllocEventId = `trade_alloc_${pair.sellerId}_to_${pair.buyerId}_${good}_${year}`;
+      const tradeAllocEventId = `trade_alloc_${bestPair.sellerId}_to_${bestPair.buyerId}_${good}_${year}_${tradeCounter}`;
       ledger.addEvent({
         eventId: tradeAllocEventId,
         time: { year },
         eventType: "trade_allocation",
         location: { cellId: buyer.cellId },
-        actorIds: [pair.sellerId, pair.buyerId],
-        affectedEntityIds: [pair.sellerId, pair.buyerId],
+        actorIds: [bestPair.sellerId, bestPair.buyerId],
+        affectedEntityIds: [bestPair.sellerId, bestPair.buyerId],
         conditions: [
           {
             conditionId: `trade_cond_${tradeAllocEventId}`,
             predicateType: "price_and_volume",
-            subjectIds: [pair.sellerId, pair.buyerId],
+            subjectIds: [bestPair.sellerId, bestPair.buyerId],
             observed: [
               { name: "volume", value: tradeVolume },
               { name: "unitPrice", value: localPrice },
@@ -438,7 +488,7 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
       // C. Market access changed
       if (buyer.marketAccess !== buyerBeforeAccess) {
         ledger.addEvent({
-          eventId: `market_access_${buyer.id}_from_${seller.id}_${good}_${year}`,
+          eventId: `market_access_${buyer.id}_from_${seller.id}_${good}_${year}_${tradeCounter}`,
           time: { year },
           eventType: "market_access_changed",
           location: { cellId: buyer.cellId },
@@ -458,7 +508,7 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
       }
       if (seller.marketAccess !== sellerBeforeAccess) {
         ledger.addEvent({
-          eventId: `market_access_${seller.id}_to_${buyer.id}_${good}_${year}`,
+          eventId: `market_access_${seller.id}_to_${buyer.id}_${good}_${year}_${tradeCounter}`,
           time: { year },
           eventType: "market_access_changed",
           location: { cellId: seller.cellId },
@@ -479,7 +529,7 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
 
       // D. Settlement wealth changed
       ledger.addEvent({
-        eventId: `wealth_change_${buyer.id}_import_from_${seller.id}_${good}_${year}`,
+        eventId: `wealth_change_${buyer.id}_import_from_${seller.id}_${good}_${year}_${tradeCounter}`,
         time: { year },
         eventType: "settlement_wealth_changed",
         location: { cellId: buyer.cellId },
@@ -498,7 +548,7 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
       });
 
       ledger.addEvent({
-        eventId: `wealth_change_${seller.id}_export_to_${buyer.id}_${good}_${year}`,
+        eventId: `wealth_change_${seller.id}_export_to_${buyer.id}_${good}_${year}_${tradeCounter}`,
         time: { year },
         eventType: "settlement_wealth_changed",
         location: { cellId: seller.cellId },
@@ -515,6 +565,7 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
         summaryArguments: { name: seller.name, before: sellerBeforeWealth.toFixed(0), after: sellerAfterWealth.toFixed(0), good },
         confidence: 1.0,
       });
+      tradeCounter++;
     }
   }
 

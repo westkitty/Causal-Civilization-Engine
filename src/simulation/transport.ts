@@ -151,7 +151,7 @@ export function updateTransport(state: WorldState, ledger: CausalLedger, branch:
         
         if (riverCrossingCell !== -1) {
           bId = `bridge_${riverCrossingCell}`;
-          isSuppressed = state.seed === "suppressed" || !!(
+          isSuppressed = !!(
             branch.intervention &&
             year >= branch.intervention.insertionYear &&
             branch.intervention.operation === "suppress_event" &&

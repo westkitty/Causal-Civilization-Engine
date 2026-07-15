@@ -8,11 +8,18 @@ An explorable historical simulation in which geography, infrastructure, settleme
 - **Simulation**: Asynchronous ES-module Web Worker thread with synchronous fallback for test runs
 - **Testing**: Vitest (Node for kernel logic, JSDOM for UI component mount checks)
 
-## Phase Checklist & Diagnostics
-- Hashing and exact Float64 DataView bitwise hashing ensures 100% repeatability.
-- Double-entry trade cost accounting with transport drag destroyed.
+## Verified Capabilities
+- Exact Float64 DataView bitwise hashing ensures 100% repeatability within a single JavaScript engine (cross-engine repeatability is unverified).
+- Double-entry transaction reconciliation with transport drag accounted as expense.
+- Dynamic residual-capacity routing via Dijkstra (zero-residual edges skipped; trades dynamically re-route around capacity bottlenecks).
+- Branch-aware, field-specific causal ancestry tracing with delta comparison, cycle detection, and chronology validation.
 - Real-time Web Worker progress indicators.
 - Causal ancestry path tracing inside the interactive Inspector.
+
+## Unverified
+- Playwright E2E acceptance tests: test code exists but has not been executed in a browser environment.
+- GPU performance metrics and draw-call instrumentation: not validated against live rendering.
+- Memory-leak detection: no heap profiling has been performed.
 
 ## Verification & Execution
 
