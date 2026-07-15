@@ -66,7 +66,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     
     // Clear container and append canvas
     containerRef.current.innerHTML = "";
@@ -76,7 +76,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     // 2. Initialize Camera & Controls
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
     // Position camera looking down at an angle
-    camera.position.set(62, 90, 120);
+    camera.position.set(0, 90, 120);
     cameraRef.current = camera;
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -85,7 +85,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     controls.maxPolarAngle = Math.PI / 2.1; // Don't go below ground
     controls.minDistance = 10;
     controls.maxDistance = 300;
-    controls.target.set(62, 0, 62);
+    controls.target.set(0, 0, 0);
     controlsRef.current = controls;
 
     // 3. Initialize Scenes
@@ -290,7 +290,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     }
   }, [stateA, stateB, activeOverlay]);
 
-  return <div ref={containerRef} className="w-full h-full" style={{ minHeight: "500px" }} />;
+  return <div ref={containerRef} className="map-canvas" aria-label="Interactive civilization map" />;
 };
 
 // Procedurally builds the visual meshes for a state snapshot
@@ -376,7 +376,7 @@ function buildVisualWorld(
 
   const terrainMesh = new THREE.Mesh(geom, terrainMaterial);
   terrainMesh.userData.kind = "terrain";
-  terrainMesh.position.set(-width / 2, 0, -height / 2);
+  terrainMesh.position.set(0, 0, 0);
   terrainMesh.receiveShadow = true;
   scene.add(terrainMesh);
 
@@ -409,6 +409,8 @@ function buildVisualWorld(
 
   for (const rId of Object.keys(state.routes)) {
     const route = state.routes[rId];
+    const routeGroup = new THREE.Group();
+    routeGroup.userData.kind = "road";
     for (const pt of route.points) {
       const rx = pt[0] - width / 2;
       const rz = pt[1] - height / 2;
@@ -417,10 +419,12 @@ function buildVisualWorld(
 
       const roadGeom = new THREE.BoxGeometry(0.8, 0.1, 0.8);
       const roadMesh = new THREE.Mesh(roadGeom, roadMaterial);
-      roadMesh.userData.kind = "road";
       roadMesh.position.set(rx, ry, rz);
-      scene.add(roadMesh);
+      routeGroup.add(roadMesh);
     }
+    scene.add(routeGroup);
+    pickables.push(routeGroup);
+    entityMap.set(routeGroup.uuid, route.id);
   }
 
   // 4. Render Settlements (Clusters of buildings)

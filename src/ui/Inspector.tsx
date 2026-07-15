@@ -1,7 +1,20 @@
 import React, { useState } from "react";
 import type { WorldState } from "../core/types";
 import { CausalLedger } from "../timelines/ledger";
-import { HelpCircle, GitPullRequest, ArrowRight, MessageSquare, AlertCircle } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowRight,
+  Building2,
+  GitPullRequest,
+  HelpCircle,
+  Link2,
+  MapPin,
+  MessageSquare,
+  MousePointer2,
+  Route as RouteIcon,
+  ShieldCheck,
+  X,
+} from "lucide-react";
 import { traceCausalAncestry } from "../core/causality";
 
 interface InspectorProps {
@@ -14,6 +27,11 @@ interface InspectorProps {
   onJumpToYear: (year: number) => void;
 }
 
+const formatNumber = (value: number, maximumFractionDigits = 0) =>
+  new Intl.NumberFormat("en-US", { maximumFractionDigits }).format(value);
+
+const readableEventType = (eventType: string) => eventType.replaceAll("_", " ");
+
 export const Inspector: React.FC<InspectorProps> = ({
   stateA,
   stateB,
@@ -24,433 +42,335 @@ export const Inspector: React.FC<InspectorProps> = ({
   onJumpToYear,
 }) => {
   const [showCausalChain, setShowCausalChain] = useState(false);
-  const [gptQuestion, setGptQuestion] = useState("");
-  const [gptResponse, setGptResponse] = useState<string | null>(null);
+  const [ledgerQuestion, setLedgerQuestion] = useState("");
+  const [ledgerResponse, setLedgerResponse] = useState<string | null>(null);
 
-  if (!selectedEntityId) return null;
+  if (!selectedEntityId) {
+    return (
+      <aside className="inspector inspector--empty" aria-labelledby="inspector-title">
+        <div className="inspector__empty-mark" aria-hidden="true">
+          <img src="/favicon.svg" alt="" />
+          <MousePointer2 />
+        </div>
+        <span className="eyebrow">Inspector</span>
+        <h2 id="inspector-title">Select a map entity</h2>
+        <p>Choose a settlement, road, bridge, or political faction to inspect its state and recorded causes.</p>
+        <ul>
+          <li><MapPin aria-hidden="true" /> Current measurements and status</li>
+          <li><GitPullRequest aria-hidden="true" /> Ledger-backed causal evidence</li>
+          <li><ArrowRight aria-hidden="true" /> Baseline and counterfactual comparison</li>
+        </ul>
+      </aside>
+    );
+  }
 
-  // Resolve entity details from State A (parent branch)
-  let settlementA = stateA.settlements[selectedEntityId];
-  let bridgeA = stateA.bridges[selectedEntityId];
-  let scarA = stateA.scars[selectedEntityId];
-  
-  // Resolve from State B (if branch is compared)
-  let settlementB = stateB?.settlements[selectedEntityId];
-  let bridgeB = stateB?.bridges[selectedEntityId];
+  const settlementA = stateA.settlements[selectedEntityId];
+  const bridgeA = stateA.bridges[selectedEntityId];
+  const routeA = stateA.routes[selectedEntityId];
+  const governmentA = stateA.governments[selectedEntityId];
+  const scarA = stateA.scars[selectedEntityId];
+  const settlementB = stateB?.settlements[selectedEntityId];
+  const bridgeB = stateB?.bridges[selectedEntityId];
+  const routeB = stateB?.routes[selectedEntityId];
+  const governmentB = stateB?.governments[selectedEntityId];
 
-  // If selected was not found, check if it's in B only or resolve from ID
   const isSettlement = settlementA !== undefined || settlementB !== undefined;
   const isBridge = bridgeA !== undefined || bridgeB !== undefined;
+  const isRoute = routeA !== undefined || routeB !== undefined;
+  const isGovernment = governmentA !== undefined || governmentB !== undefined;
   const isScar = scarA !== undefined;
 
   const currentSettlement = settlementA || settlementB;
   const currentBridge = bridgeA || bridgeB;
+  const currentRoute = routeA || routeB;
+  const currentGovernment = governmentA || governmentB;
 
-  // 1. Generate local causal explanation from ledger
-  const getCausalExplanation = () => {
-    if (isBridge) {
-      const bId = currentBridge?.id || "";
-      const buildEvent = ledgerA.getAllEvents().find(e => e.eventType === "bridge_construction" && e.affectedEntityIds.includes(bId));
-      if (!buildEvent) return { title: "Arch Bridge", causes: [{ role: "necessary", text: "Built in early development eras." }] };
+  const entityType = isSettlement
+    ? "Settlement Node"
+    : isBridge
+      ? "Infrastructure Link"
+      : isRoute
+        ? "Transport route"
+        : isGovernment
+          ? "Government"
+          : isScar
+            ? "Historical scar"
+            : "Unknown entity";
+  const entityName = isSettlement
+    ? currentSettlement?.name?.trim() || "Unnamed settlement"
+    : isBridge
+      ? "Stone arch bridge"
+      : isRoute
+        ? `${currentRoute?.type === "road" ? "Road" : currentRoute?.type ?? "Route"} link`
+        : isGovernment
+          ? currentGovernment?.name?.trim() || "Unnamed government"
+          : isScar
+            ? readableEventType(scarA.type)
+            : "Entity not present at this year";
 
-      const demand = buildEvent.conditions[0]?.observed.find(o => o.name === "demand")?.value || 0;
-      
-      return {
-        title: "Stone Arch Bridge",
-        establishedYear: currentBridge?.constructionYear,
-        causes: [
-          { role: "necessary", text: `River crossing demand exceeded the structural threshold (Observed: ${demand.toFixed(0)} / Required: 1800)` },
-          { role: "enabling", text: "Masonry techniques and construction expertise were available" },
-          { role: "enabling", text: "Connected municipal treasuries were sufficient to cover construction costs" },
-          { role: "contributing", text: "Agricultural and ore trade routes required permanent year-round crossing reliability" }
-        ]
-      };
-    }
-
-    if (isSettlement) {
-      const sId = currentSettlement?.id || "";
-      const foundEvent = ledgerA.getAllEvents().find(e => e.eventType === "founding" && e.affectedEntityIds.includes(sId));
-      const suitability = foundEvent?.conditions[0]?.observed.find(o => o.name === "suitability")?.value || 50;
-
-      return {
-        title: `${currentSettlement?.name || "Settlement"}`,
-        establishedYear: currentSettlement?.establishedYear,
-        causes: [
-          { role: "necessary", text: `Site crossed the suitability threshold (Scored: ${suitability.toFixed(0)} / Required: 30)` },
-          { role: "enabling", text: `Freshwater access from nearby river corridors (accumulation > 200)` },
-          { role: "contributing", text: "Migrants spun off from crowded older settlements under capacity pressures" }
-        ]
-      };
-    }
-
-    if (isScar) {
-      return {
-        title: "Ruined Foundations",
-        establishedYear: scarA.year,
-        causes: [
-          { role: "necessary", text: "Population fell below the viability limit, leading to total abandonment" },
-          { role: "enabling", text: "Lack of active trade routes and external financial subsidies" }
-        ]
-      };
-    }
-
-    return { title: "Unknown Entity", causes: [] };
-  };
-
-  const explanation = getCausalExplanation();
-  const intervEvent = ledgerB?.getAllEvents().find(e => e.eventType === "timeline_intervention");
-  const query = {
+  const field = isSettlement ? "wealth" : isBridge ? "status" : isRoute ? "travelTime" : "intensity";
+  const interventionEvent = ledgerB?.getAllEvents().find((event) => event.eventType === "timeline_intervention");
+  const causalTrace = traceCausalAncestry({
     entityId: selectedEntityId,
-    field: isSettlement ? "wealth" : (isBridge ? "status" : "travelTime"),
-    interventionEventId: intervEvent ? intervEvent.eventId : "interv_suppress_bridge_10"
-  };
-  const causalTrace = traceCausalAncestry(query, stateA, stateB, ledgerA, ledgerB);
+    field,
+    interventionEventId: interventionEvent?.eventId ?? "interv_suppress_bridge_10",
+  }, stateA, stateB, ledgerA, ledgerB);
 
-  // 2. Ledger Grounded Causal Q&A Query Tool
-  const handleGptQuery = (q: string) => {
-    setGptQuestion(q);
+  const affectedEvents = ledgerA.getAllEvents()
+    .filter((event) => event.affectedEntityIds.includes(selectedEntityId) || event.actorIds.includes(selectedEntityId))
+    .sort((a, b) => b.time.year - a.time.year || a.eventId.localeCompare(b.eventId));
 
-    const queryLower = q.toLowerCase();
+  const buildEvent = isBridge
+    ? ledgerA.getAllEvents().find((event) => event.eventType === "bridge_construction" && event.affectedEntityIds.includes(selectedEntityId))
+    : undefined;
+  const foundingEvent = isSettlement
+    ? ledgerA.getAllEvents().find((event) => event.eventType === "founding" && event.affectedEntityIds.includes(selectedEntityId))
+    : undefined;
+  const causeSummary = isBridge
+    ? [
+        `Crossing demand reached the bridge rule threshold${buildEvent ? ` in Year ${buildEvent.time.year}` : ""}.`,
+        "A permanent link connected the existing transport corridor across the river.",
+      ]
+    : isSettlement
+      ? [
+          `The site met settlement suitability conditions${foundingEvent ? ` in Year ${foundingEvent.time.year}` : ""}.`,
+          "Fresh water, terrain, and migration pressure contributed to the recorded founding.",
+        ]
+      : isRoute
+        ? ["The route records a built transport corridor between settlement activity centers."]
+        : isGovernment
+          ? ["Government creation followed eligible settlement and capital prerequisites."]
+          : isScar
+            ? ["The scar preserves a recorded loss or abandonment in the physical landscape."]
+            : ["This identifier is not present in the selected year."];
 
-    if (queryLower.includes("bridge") || (isBridge && queryLower.includes("created"))) {
-      if (isBridge) {
-        const bId = currentBridge?.id || "";
-        const buildEvent = ledgerA.getAllEvents().find(
-          e => e.eventType === "bridge_construction" && e.affectedEntityIds.includes(bId)
-        );
-
-        if (buildEvent) {
-          const demand = buildEvent.conditions[0]?.observed.find(o => o.name === "demand")?.value || 0;
-          const threshold = buildEvent.conditions[0]?.observed.find(o => o.name === "demand")?.threshold || 1800;
-
-          if (stateB) {
-            const bridgeInB = stateB.bridges[selectedEntityId];
-            if (bridgeInB && bridgeInB.status === "active") {
-              setGptResponse(
-                `In BOTH timelines, this bridge was successfully built. In the parent branch [main], it emerged in Year ${buildEvent.time.year} [Ref ID: ${buildEvent.eventId}]. In the counterfactual branch, it emerged identically prior to any timeline divergence.`
-              );
-            } else {
-              const intervEvent = ledgerB?.getAllEvents().find(e => e.eventType === "timeline_intervention");
-              const intervRef = intervEvent ? ` [Ref ID: ${intervEvent.eventId}]` : "";
-              setGptResponse(
-                `In the original timeline [main], this bridge was built in Year ${buildEvent.time.year} due to river crossing demand (${demand.toFixed(0)} exceeding threshold ${threshold}) [Ref ID: ${buildEvent.eventId}]. However, in the counterfactual timeline, you suppressed this event${intervRef}, so no bridge exists here. Trade detoured, shifting local economics.`
-              );
-            }
-          } else {
-            setGptResponse(
-              `This bridge was constructed in Year ${buildEvent.time.year} under rule '${buildEvent.ruleId}'. The trigger was crossing demand (${demand.toFixed(0)} exceeding threshold ${threshold}) [Ref ID: ${buildEvent.eventId}].`
-            );
-          }
-        } else {
-          setGptResponse(
-            "This bridge exists in the simulation state, but its construction event was not found in the parent timeline ledger."
-          );
-        }
+  const answerLedgerQuestion = (question: "created" | "diverged") => {
+    setLedgerQuestion(question);
+    if (question === "diverged") {
+      if (!stateB) {
+        setLedgerResponse("No counterfactual is ready. Create a branch before asking how this entity diverged.");
+      } else if (isBridge && !bridgeB) {
+        setLedgerResponse(`The Year 10 intervention directly suppressed this bridge. The baseline retains it; the counterfactual does not.${interventionEvent ? ` Evidence: ${interventionEvent.eventId}.` : ""}`);
+      } else if (causalTrace.status === "verified_causal_path") {
+        setLedgerResponse(`A verified path of ${causalTrace.path.length} ledger events connects the intervention to this changed ${field} value.`);
+      } else if (causalTrace.status === "unresolved_ancestry") {
+        setLedgerResponse("The value differs, but the ledger does not contain a continuous verified event path from the intervention. The difference remains unresolved.");
       } else {
-        setGptResponse("The selected object is not an infrastructure link (bridge).");
+        setLedgerResponse(`No ${field} divergence is recorded for this entity at Year ${stateA.year}.`);
       }
-    } else if (queryLower.includes("founded") || queryLower.includes("town") || (isSettlement && queryLower.includes("created"))) {
-      if (isSettlement) {
-        const sId = currentSettlement?.id || "";
-        const foundEvent = ledgerA.getAllEvents().find(
-          e => e.eventType === "founding" && e.affectedEntityIds.includes(sId)
-        );
+      return;
+    }
 
-        if (foundEvent) {
-          const suitability = foundEvent.conditions[0]?.observed.find(o => o.name === "suitability")?.value || 0;
-          setGptResponse(
-            `This town was founded in Year ${foundEvent.time.year} under rule '${foundEvent.ruleId}'. The site suitability score was ${suitability.toFixed(1)} [Ref ID: ${foundEvent.eventId}].`
-          );
-        } else {
-          setGptResponse(
-            "This settlement exists, but its founding event was not recorded in the parent timeline ledger."
-          );
-        }
-      } else {
-        setGptResponse("The selected object is not a settlement node.");
-      }
-    } else if (
-      queryLower.includes("decline") ||
-      queryLower.includes("happen") ||
-      queryLower.includes("diverge") ||
-      queryLower.includes("suppress") ||
-      queryLower.includes("affect")
-    ) {
-      if (stateB) {
-        const intervEvent = ledgerB?.getAllEvents().find(e => e.eventType === "timeline_intervention");
-        const intervRef = intervEvent ? ` [Ref ID: ${intervEvent.eventId}]` : "";
-
-        if (isBridge) {
-          const bridgeInB = stateB.bridges[selectedEntityId];
-          if (!bridgeInB) {
-            setGptResponse(
-              `This bridge's construction was directly prevented by the counterfactual intervention event${intervRef} at Year 10. (Causal ancestry: direct prevention path verified).`
-            );
-          } else {
-            setGptResponse(
-              "Both timelines are identical at this year; the bridge exists in both branches."
-            );
-          }
-        } else if (isSettlement) {
-          const popA = settlementA?.population || 0;
-          const popB = settlementB?.population || 0;
-          const name = currentSettlement?.name || "this settlement";
-
-          if (popA === 0 && popB > 0) {
-            const abandonEvent = ledgerA.getAllEvents().find(
-              e => e.eventType === "abandonment" && e.affectedEntityIds.includes(selectedEntityId)
-            );
-            const abandonRef = abandonEvent ? ` [Ref ID: ${abandonEvent.eventId}]` : "";
-            setGptResponse(
-              `In the original timeline, ${name} was abandoned in Year ${settlementA?.abandonedYear}${abandonRef}. In the counterfactual timeline, it is active with population ${popB}. Causal link: Suppression of the bridge${intervRef} redirected trade routes, preserving this settlement's market access.`
-            );
-          } else if (popA > popB) {
-            setGptResponse(
-              `In the original timeline, ${name} has a population of ${popA}. In the counterfactual timeline, its population decreased to ${popB}. Causal link: Suppression of the bridge${intervRef} increased detour costs, causing woodcutters and farmers to migrate elsewhere.`
-            );
-          } else if (popA < popB) {
-            setGptResponse(
-              `In the original timeline, ${name} has a population of ${popA}. In the counterfactual timeline, its population increased to ${popB}. Causal link: Suppression of the bridge${intervRef} forced trade routes to detour south, reinforcing this town's market access.`
-            );
-          } else {
-            setGptResponse(
-              `No divergence in population is recorded for ${name} between the timelines at Year ${stateA.year}.`
-            );
-          }
-        } else {
-          setGptResponse(
-            `No divergence has been recorded for this entity yet. Play the simulation forward or swipe branches to compare outcomes.`
-          );
-        }
-      } else {
-        setGptResponse(
-          "Timeline comparison is not active. Create a counterfactual branch to trace divergence ancestry."
-        );
-      }
+    if (buildEvent) {
+      setLedgerResponse(`The bridge-construction event was recorded in Year ${buildEvent.time.year} under rule ${buildEvent.ruleId}. Evidence: ${buildEvent.eventId}.`);
+    } else if (foundingEvent) {
+      setLedgerResponse(`The settlement founding was recorded in Year ${foundingEvent.time.year} under rule ${foundingEvent.ruleId}. Evidence: ${foundingEvent.eventId}.`);
+    } else if (affectedEvents.length > 0) {
+      setLedgerResponse(`The earliest matching record is ${affectedEvents.at(-1)?.eventId} in Year ${affectedEvents.at(-1)?.time.year}.`);
     } else {
-      setGptResponse(
-        `Based on ledger records, this entity emerged from initial regional conditions. [Ref ID: initial_spawning]`
-      );
+      setLedgerResponse("No creation event for this identifier is present in the current ledger.");
     }
   };
+
+  const entityIcon = isSettlement
+    ? <Building2 aria-hidden="true" />
+    : isRoute || isBridge
+      ? <RouteIcon aria-hidden="true" />
+      : isGovernment
+        ? <ShieldCheck aria-hidden="true" />
+        : <MapPin aria-hidden="true" />;
 
   return (
-    <div className="absolute top-4 right-4 bottom-24 z-10 w-96 bg-slate-900/90 backdrop-blur-md border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="p-4 border-b border-white/10 flex justify-between items-start">
-        <div>
-          <span className="text-[10px] text-cyan-400 font-semibold tracking-widest uppercase">
-            {isSettlement ? "Settlement Node" : isBridge ? "Infrastructure Link" : "Structural Scar"}
-          </span>
-          <h2 className="text-lg font-bold text-white mt-0.5">{explanation.title}</h2>
+    <aside className="inspector inspector--selected" aria-labelledby="inspector-title">
+      <header className="inspector__header">
+        <div className="inspector__identity">
+          <span className="inspector__icon">{entityIcon}</span>
+          <div>
+            <span className="eyebrow">{entityType}</span>
+            <h2 id="inspector-title">{entityName}</h2>
+            <code>{selectedEntityId}</code>
+          </div>
         </div>
-        <button
-          onClick={onClose}
-          className="text-slate-400 hover:text-white text-xs font-semibold px-2 py-1 rounded bg-white/5 hover:bg-white/10 transition-all"
-        >
-          Close
+        <button className="icon-button" type="button" onClick={onClose} aria-label="Close" title="Close Inspector">
+          <X aria-hidden="true" />
         </button>
-      </div>
+      </header>
 
-      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
-        {/* Core Attributes & Comparative Divergence */}
-        <div className="bg-white/5 rounded-xl p-3 border border-white/5">
-          <h3 className="text-xs font-semibold text-slate-300 mb-2">Simulation Metrics</h3>
+      <div className="inspector__body">
+        <section className="inspector-section" aria-labelledby="current-state-title">
+          <div className="section-heading">
+            <span className="eyebrow">At Year {stateA.year}</span>
+            <h3 id="current-state-title">Current state</h3>
+          </div>
+
           {isSettlement && currentSettlement && (
-            <div className="flex flex-col gap-2">
-              <div className="flex justify-between text-xs">
-                <span className="text-slate-400">Established:</span>
-                <span className="text-white font-mono">Year {explanation.establishedYear}</span>
-              </div>
-              
-              {/* Divergence layout */}
-              {stateB && settlementB !== undefined ? (
-                <div className="mt-2 border-t border-white/10 pt-2 flex flex-col gap-1.5">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Population:</span>
-                    <div className="flex items-center gap-1.5 font-mono">
-                      <span className="text-cyan-400">{settlementA?.population || 0}</span>
-                      <ArrowRight size={10} className="text-slate-500" />
-                      <span className="text-indigo-400">{settlementB.population}</span>
-                    </div>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Wealth:</span>
-                    <div className="flex items-center gap-1.5 font-mono">
-                      <span className="text-cyan-400">{settlementA?.wealth || 0}</span>
-                      <ArrowRight size={10} className="text-slate-500" />
-                      <span className="text-indigo-400">{settlementB.wealth}</span>
-                    </div>
-                  </div>
-                  {settlementA?.abandoned !== settlementB.abandoned && (
-                    <div className="text-[10px] text-amber-400 flex items-center gap-1 bg-amber-500/10 p-1.5 rounded border border-amber-500/20 mt-1">
-                      <AlertCircle size={12} /> Divergent Abandonment State!
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Population:</span>
-                    <span className="text-white font-mono">{settlementA?.population || 0}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Wealth:</span>
-                    <span className="text-white font-mono">{settlementA?.wealth || 0} gold</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Food Access:</span>
-                    <span className="text-white font-mono">{(settlementA?.foodAccess * 100).toFixed(0)}%</span>
-                  </div>
-                </div>
-              )}
-            </div>
+            <dl className="metric-list">
+              <div><dt>Status</dt><dd><span className={`state-badge ${currentSettlement.abandoned ? "state-badge--ruined" : "state-badge--active"}`}>{currentSettlement.abandoned ? "Abandoned" : "Active"}</span></dd></div>
+              <div><dt>Established</dt><dd>Year {currentSettlement.establishedYear}</dd></div>
+              <div><dt>Population</dt><dd>{formatNumber(currentSettlement.population)} people</dd></div>
+              <div><dt>Wealth</dt><dd>{formatNumber(currentSettlement.wealth)} gold</dd></div>
+              <div><dt>Food access</dt><dd>{formatNumber(currentSettlement.foodAccess * 100)}%</dd></div>
+              <div><dt>Water security</dt><dd>{formatNumber(currentSettlement.waterSecurity * 100)}%</dd></div>
+            </dl>
           )}
 
           {isBridge && currentBridge && (
-            <div className="flex flex-col gap-2">
-              <div className="flex justify-between text-xs">
-                <span className="text-slate-400">Built:</span>
-                <span className="text-white font-mono">Year {explanation.establishedYear}</span>
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-slate-400">Span size:</span>
-                <span className="text-white font-mono">{currentBridge.span} meters</span>
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-slate-400">State:</span>
-                <span className={`font-mono ${currentBridge.status === "active" ? "text-green-400" : "text-red-400"}`}>
-                  {currentBridge.status.toUpperCase()}
-                </span>
-              </div>
-              {stateB && (
-                <div className="mt-2 border-t border-white/10 pt-2 flex justify-between text-xs">
-                  <span className="text-slate-400">In Branch Timeline:</span>
-                  <span className={`font-mono ${bridgeB ? "text-green-400" : "text-red-400"}`}>
-                    {bridgeB ? "EXISTS" : "SUPPRESSED"}
-                  </span>
-                </div>
-              )}
+            <dl className="metric-list">
+              <div><dt>Baseline status</dt><dd><span className={`state-badge ${currentBridge.status === "active" ? "state-badge--active" : "state-badge--ruined"}`}>{currentBridge.status}</span></dd></div>
+              <div><dt>Built</dt><dd>Year {currentBridge.constructionYear}</dd></div>
+              <div><dt>Span</dt><dd>{formatNumber(currentBridge.span)} metres</dd></div>
+              <div><dt>Route</dt><dd><code>{currentBridge.routeEdgeId}</code></dd></div>
+              {stateB && <div><dt>Counterfactual</dt><dd><span className={`state-badge ${bridgeB ? "state-badge--active" : "state-badge--suppressed"}`}>{bridgeB ? bridgeB.status : "SUPPRESSED"}</span></dd></div>}
+            </dl>
+          )}
+
+          {isRoute && currentRoute && (
+            <dl className="metric-list">
+              <div><dt>Type</dt><dd>{currentRoute.type}</dd></div>
+              <div><dt>Built</dt><dd>Year {currentRoute.constructionYear}</dd></div>
+              <div><dt>Length</dt><dd>{formatNumber(currentRoute.length, 1)} cells</dd></div>
+              <div><dt>Travel time</dt><dd>{formatNumber(currentRoute.travelTime, 1)} time units</dd></div>
+              <div><dt>Capacity</dt><dd>{formatNumber(currentRoute.capacity)} units / year</dd></div>
+              <div><dt>Condition</dt><dd>{formatNumber(currentRoute.condition * 100)}%</dd></div>
+            </dl>
+          )}
+
+          {isGovernment && currentGovernment && (
+            <dl className="metric-list">
+              <div><dt>Status</dt><dd><span className="state-badge state-badge--active">Active government</span></dd></div>
+              <div><dt>Capital</dt><dd><code>{currentGovernment.capitalId}</code></dd></div>
+              <div><dt>Treasury</dt><dd>{formatNumber(currentGovernment.treasury)} gold</dd></div>
+              <div><dt>Legitimacy</dt><dd>{formatNumber(currentGovernment.legitimacy * 100)}%</dd></div>
+              <div><dt>Tax rate</dt><dd>{formatNumber(currentGovernment.taxRate * 100)}%</dd></div>
+            </dl>
+          )}
+
+          {isScar && (
+            <dl className="metric-list">
+              <div><dt>Status</dt><dd><span className="state-badge state-badge--ruined">Recorded scar</span></dd></div>
+              <div><dt>Formed</dt><dd>Year {scarA.year}</dd></div>
+              <div><dt>Intensity</dt><dd>{formatNumber(scarA.intensity * 100)}%</dd></div>
+            </dl>
+          )}
+
+          {!isSettlement && !isBridge && !isRoute && !isGovernment && !isScar && (
+            <div className="inline-notice inline-notice--warning">
+              <AlertCircle aria-hidden="true" /> This entity is unavailable at Year {stateA.year}. Try another year.
             </div>
           )}
-        </div>
+        </section>
 
-        {/* Provenance "Why is this here?" button and explanation */}
-        <div className="flex flex-col gap-2">
+        {stateB && isSettlement && currentSettlement && (
+          <section className="inspector-section" aria-labelledby="branch-comparison-title">
+            <div className="section-heading">
+              <span className="eyebrow">Baseline → counterfactual</span>
+              <h3 id="branch-comparison-title">Branch comparison</h3>
+            </div>
+            <div className="comparison-table" role="table" aria-label="Settlement branch comparison">
+              <div role="row"><span role="columnheader">Measure</span><span role="columnheader">Baseline</span><span role="columnheader">Counterfactual</span></div>
+              <div role="row"><span role="rowheader">Population</span><strong>{formatNumber(settlementA?.population ?? 0)}</strong><strong>{formatNumber(settlementB?.population ?? 0)}</strong></div>
+              <div role="row"><span role="rowheader">Wealth</span><strong>{formatNumber(settlementA?.wealth ?? 0)}</strong><strong>{formatNumber(settlementB?.wealth ?? 0)}</strong></div>
+              <div role="row"><span role="rowheader">Status</span><strong>{settlementA?.abandoned ? "Abandoned" : "Active"}</strong><strong>{settlementB?.abandoned ? "Abandoned" : "Active"}</strong></div>
+            </div>
+          </section>
+        )}
+
+        <section className="inspector-section" aria-labelledby="history-title">
+          <details>
+            <summary>
+              <span><span className="eyebrow">{affectedEvents.length} matching records</span><strong id="history-title">Historical changes</strong></span>
+            </summary>
+            {affectedEvents.length > 0 ? (
+              <ol className="event-list">
+                {affectedEvents.slice(0, 12).map((event) => (
+                  <li key={event.eventId}>
+                    <span>Year {event.time.year}</span>
+                    <strong>{readableEventType(event.eventType)}</strong>
+                    <p>{event.summaryTemplate || "Recorded ledger change."}</p>
+                    <code>{event.eventId}</code>
+                  </li>
+                ))}
+              </ol>
+            ) : <p className="empty-copy">No matching ledger events are recorded for this identifier.</p>}
+          </details>
+        </section>
+
+        <section className="inspector-section inspector-section--causal" aria-labelledby="causal-title">
           <button
-            onClick={() => setShowCausalChain(!showCausalChain)}
-            className="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold rounded-xl flex items-center justify-center gap-2 transition-all shadow-md"
+            type="button"
+            className="action-button action-button--causal"
+            onClick={() => setShowCausalChain((visible) => !visible)}
+            aria-expanded={showCausalChain}
           >
-            <GitPullRequest size={16} /> Why is this here?
+            <GitPullRequest aria-hidden="true" /> Why is this here?
           </button>
 
           {showCausalChain && (
-            <div className="bg-slate-950/70 border border-white/5 rounded-xl p-3 flex flex-col gap-3">
-              <h4 className="text-xs font-semibold text-cyan-400">Ledger-Backed Causal Ancestry</h4>
-              
+            <div className="causal-panel">
+              <div className="section-heading">
+                <span className="eyebrow">Recorded evidence</span>
+                <h3 id="causal-title">Ledger-Backed Causal Ancestry</h3>
+              </div>
               {stateB && (
-                <div className={`text-[10px] px-2 py-1 rounded font-mono border ${
-                  causalTrace.status === "verified_causal_path"
-                    ? "bg-cyan-500/10 border-cyan-500/30 text-cyan-400"
-                    : causalTrace.status === "unresolved_ancestry"
-                    ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
-                    : "bg-slate-500/10 border-slate-500/30 text-slate-400"
-                }`}>
-                  Status: {causalTrace.status.toUpperCase()} (Confidence: {(causalTrace.confidence * 100).toFixed(0)}%)
+                <div className={`trace-status trace-status--${causalTrace.status}`}>
+                  <Link2 aria-hidden="true" />
+                  <span><strong>{readableEventType(causalTrace.status)}</strong> · {formatNumber(causalTrace.confidence * 100)}% confidence</span>
                 </div>
               )}
 
-              <div className="flex flex-col gap-3 relative before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-[1px] before:bg-white/10">
-                {stateB && causalTrace.status === "verified_causal_path" ? (
-                  causalTrace.path.map((step, i) => (
-                    <div key={i} className="flex gap-3 text-xs pl-1">
-                      <div className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px] font-bold z-10 border bg-indigo-500/20 border-indigo-400 text-indigo-300">
-                        {i + 1}
-                      </div>
-                      <div className="flex-1 flex flex-col gap-0.5">
-                        <span className="text-[9px] text-slate-500 font-mono tracking-wider">Event ID: {step.eventId} (Year {step.year})</span>
-                        <span className="text-[9px] text-indigo-400 uppercase font-semibold">{step.eventType}</span>
-                        <span className="text-slate-300">{step.summary}</span>
-                      </div>
-                    </div>
-                  ))
-                ) : stateB && causalTrace.status === "unresolved_ancestry" ? (
-                  <div className="flex flex-col gap-2 text-xs text-amber-400 bg-amber-500/10 p-2.5 rounded border border-amber-500/20 z-10">
-                    <span className="font-semibold">Unresolved Ancestry:</span>
-                    <span>Entity ID '{selectedEntityId}' has different values, but no continuous chain of event links connects it to the intervention.</span>
-                    {causalTrace.missingEventIds.length > 0 && (
-                      <span>Missing Event IDs: {causalTrace.missingEventIds.join(", ")}</span>
-                    )}
-                  </div>
-                ) : (
-                  explanation.causes.map((c, i) => (
-                    <div key={i} className="flex gap-3 text-xs pl-1">
-                      <div className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px] font-bold z-10 border ${
-                        c.role === "necessary"
-                          ? "bg-cyan-500/20 border-cyan-400 text-cyan-300"
-                          : c.role === "enabling"
-                          ? "bg-emerald-500/20 border-emerald-400 text-emerald-300"
-                          : "bg-amber-500/20 border-amber-400 text-amber-300"
-                      }`}>
-                        {c.role[0].toUpperCase()}
-                      </div>
-                      <div className="flex-1 flex flex-col gap-0.5">
-                        <span className="text-[9px] text-slate-500 uppercase font-semibold tracking-wider">{c.role} cause</span>
-                        <span className="text-slate-300">{c.text}</span>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-              {explanation.establishedYear !== undefined && (
+              {stateB && causalTrace.status === "verified_causal_path" ? (
+                <ol className="causal-path">
+                  {causalTrace.path.map((step) => (
+                    <li key={step.eventId}>
+                      <span>Year {step.year}</span>
+                      <strong>{readableEventType(step.eventType)}</strong>
+                      <p>{step.summary}</p>
+                      <code>{step.eventId}</code>
+                    </li>
+                  ))}
+                </ol>
+              ) : stateB && causalTrace.status === "unresolved_ancestry" ? (
+                <div className="inline-notice inline-notice--warning">
+                  <AlertCircle aria-hidden="true" />
+                  <span><strong>Unresolved ancestry.</strong> The value differs, but no continuous ledger path connects it to the intervention.{causalTrace.missingEventIds.length > 0 ? ` Missing: ${causalTrace.missingEventIds.join(", ")}.` : ""}</span>
+                </div>
+              ) : (
+                <ol className="cause-list">
+                  {causeSummary.map((cause, index) => <li key={cause}><span>{index + 1}</span><p>{cause}</p></li>)}
+                </ol>
+              )}
+
+              {(currentSettlement?.establishedYear ?? currentBridge?.constructionYear ?? currentRoute?.constructionYear) !== undefined && (
                 <button
-                  onClick={() => onJumpToYear(explanation.establishedYear!)}
-                  className="text-[10px] text-cyan-400 hover:text-cyan-300 underline font-medium self-end"
+                  type="button"
+                  className="text-button"
+                  onClick={() => onJumpToYear(currentSettlement?.establishedYear ?? currentBridge?.constructionYear ?? currentRoute?.constructionYear ?? stateA.year)}
                 >
-                  Rewind timeline to Year {explanation.establishedYear}
+                  Jump to recorded start year
                 </button>
               )}
             </div>
           )}
-        </div>
+        </section>
 
-        {/* Local GPT Evidence Q&A Interface */}
-        <div className="border-t border-white/10 pt-4 mt-2">
-          <h3 className="text-xs font-semibold text-slate-300 mb-2 flex items-center gap-1.5">
-            <MessageSquare size={14} className="text-indigo-400" /> Causal Ledger Q&A
-          </h3>
-          <div className="flex flex-col gap-2">
-            {/* Suggested questions */}
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                onClick={() => handleGptQuery(isBridge ? "Why was this bridge constructed?" : "Why was this town founded?")}
-                className="text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 px-2 py-1.5 rounded-lg border border-white/5 transition-all text-left"
-              >
-                Why was it created?
-              </button>
-              {stateB && (
-                <button
-                  onClick={() => handleGptQuery("How did the bridge suppression affect this?")}
-                  className="text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 px-2 py-1.5 rounded-lg border border-white/5 transition-all text-left"
-                >
-                  How did branches diverge?
-                </button>
-              )}
-            </div>
-
-            {/* Answer Display */}
-            {gptQuestion && (
-              <div className="bg-slate-950/80 border border-indigo-500/20 rounded-xl p-3 mt-2 flex flex-col gap-2">
-                <span className="text-[9px] text-indigo-400 font-semibold uppercase font-mono">Ledger Grounded Response</span>
-                <p className="text-xs text-slate-300 leading-relaxed font-sans">{gptResponse}</p>
-                <div className="text-[9px] text-slate-500 flex items-center gap-1">
-                  <HelpCircle size={10} /> Fact-checked against causal ledger
-                </div>
-              </div>
-            )}
+        <section className="inspector-section" aria-labelledby="ledger-questions-title">
+          <div className="section-heading">
+            <span className="eyebrow">Deterministic local answers</span>
+            <h3 id="ledger-questions-title"><MessageSquare aria-hidden="true" /> Ledger questions</h3>
           </div>
-        </div>
+          <div className="question-buttons">
+            <button type="button" onClick={() => answerLedgerQuestion("created")}>Why was it created?</button>
+            {stateB && <button type="button" onClick={() => answerLedgerQuestion("diverged")}>How did the branches diverge?</button>}
+          </div>
+          {ledgerQuestion && ledgerResponse && (
+            <div className="ledger-answer" role="status">
+              <span className="eyebrow">Ledger-grounded response</span>
+              <p>{ledgerResponse}</p>
+              <small><HelpCircle aria-hidden="true" /> Derived from recorded simulation events; no external model call.</small>
+            </div>
+          )}
+        </section>
       </div>
-    </div>
+    </aside>
   );
 };

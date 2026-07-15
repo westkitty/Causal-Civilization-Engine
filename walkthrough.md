@@ -6,7 +6,7 @@ This document provides a final summary of changes made to the Causal Civilizatio
 
 1. **Phase 1 — Prevent Event Overwrites**:
    - Modified `CausalLedger.addEvent` in `src/timelines/ledger.ts` to check if an event with the target `eventId` already exists. If it does, the ledger throws a descriptive error: `Duplicate causal event ID: ${event.eventId}`.
-   - Refactored event IDs in `src/simulation/economy.ts` to prevent collisions between transactions in the same year. Added a per-good `tradeCounter` suffix to all trade event IDs so that capacity-split re-routes within the same year produce unique IDs.
+   - Refactored trade events to use pair-scoped allocation ordinals for unique raw IDs and semantic `correlationKey` values for cross-branch matching. Unrelated trade ordering can no longer shift the identity of a focal pair.
    - Refactored event IDs in `src/simulation/transport.ts` to include the bridge ID: `wealth_change_${s.id}_invest_${bId}_${year}`.
    - Refactored event IDs in `src/simulation/politics.ts` to include the government ID: `wealth_change_${item.s.id}_tax_${govId}_${year}`.
    - Added a unit test verifying that duplicate ID insertion is rejected.
@@ -48,16 +48,25 @@ This document provides a final summary of changes made to the Causal Civilizatio
    - Branch replay at Year 0 no longer simulates bootstrap twice. Post-bootstrap branches retain government/control data, exactly match every pre-intervention hash, and do not duplicate political-founding events.
    - Political propagation indexes road adjacency and active bridge cells once per year. This preserves the existing formula while avoiding repeated route scans; timeline storage and Worker payload architecture were not changed.
 
+8. **UI/UX and Interface-Asset Polish**:
+   - Corrected the map/camera origin mismatch that left the terrain almost entirely outside the visible workspace.
+   - Replaced the incomplete Tailwind-like utility sheet with a semantic CSS token layer for surfaces, text, branch/faction/infrastructure states, spacing, radii, borders, targets, focus, transitions, and reduced motion.
+   - Reframed the app as a map-first causal field atlas: identity/status/action shell, real Worker progress, overlay-specific legends, ledger-event timeline markers, explicit branch preview, directly labeled split comparison, and a persistent empty Inspector.
+   - Expanded Inspector coverage to settlements, routes, bridges, governments, scars, missing entities, causal paths, evidence history, and branch comparison without changing simulation or causal semantics.
+   - Added graceful 768×1024 and 390×844 behavior with a collapsible map-control tray, Inspector sheet, compact timeline, page-overflow guard, and approximately 44×44 CSS-pixel targets.
+   - Replaced the external Google Font requests and default Vite favicon with local font stacks and an original local branching-terrain SVG mark. Removed unrelated unused SVG starter assets.
+   - Added `tests/e2e/ui-polish.spec.ts` to verify loading resize, semantic shell geometry, overlay/legend/data agreement, Inspector states, keyboard focus, reduced motion, narrow layout, branch recomputation, comparison labels/divider, suppression, and error recovery.
+
 ## Verification Evidence
 
 ### Automated Test Output
-All 56 unit/JSDOM tests (kernel + repairs + 1 UI mount) pass cleanly, plus 5 real-browser Playwright tests:
+All 56 unit/JSDOM tests (kernel + repairs + 1 UI mount) pass cleanly. The focused UI-polish Playwright test also passes through the real Worker flow:
 ```bash
  Test Files  3 passed (3)
       Tests  56 passed (56)     # vitest
-   5 passed                     # playwright (headless Chromium)
+   1 passed                     # focused UI Playwright (headless Chromium)
 ```
-Lint reports 0 errors and 0 warnings.
+Final bounded gate: lint 0 errors/0 warnings in 0.78 s; Vitest 56/56 in 228.06 s with file-level serialization; production build success in 6.67 s; focused UI Playwright 1/1 in approximately 3.7 min. The six-test aggregate E2E sweep was started and then intentionally interrupted when the user requested minimum required testing; it is not reported as a final full-suite pass.
 
 ### 5-Stage Causal Diagnostic Output
 The test run output prints the following verified causal signature with quantitative divergence data. Trade/path/wealth event IDs now carry a pair-scoped ordinal suffix (`_0`) instead of a global trade counter, and correlate across branches by an explicit `correlationKey` (e.g. `trade:24:settlement_5045:settlement_7545:timber:0`):
@@ -80,7 +89,7 @@ Original Transport Expense: 0.8400 | Counterfactual Transport Expense: 2.5200
 ```
 
 ### Verification status (updated by the final adversarial audit)
-- **Playwright E2E Tests**: EXECUTED. `@playwright/test` + Chromium are installed; `npm run test:e2e` runs 5 real-browser tests, including focused politics state/render/branch verification through the real Worker.
+- **Playwright E2E Tests**: AVAILABLE. `@playwright/test` + Chromium are installed; the suite now defines six real-browser tests. For this UI pass, the new focused test was executed and passed end-to-end. The final aggregate sweep was intentionally stopped at the user's minimum-testing request, so no new six-test aggregate pass is claimed.
 - **Browser performance**: MEASURED with politics active under software WebGL (SwiftShader): ~9 FPS, ~112/168 ms avg/worst frame, 141 draw calls, 32,432 triangles, ~905 MB heap, ~107 s baseline sim. These are software-rendering figures (no GPU); 60 FPS is not claimed.
 - **SpiderMonkey & Cross-engine Hashing**: still unverified (out of scope) — determinism is claimed only for the tested local JavaScript runtime.
 - **Leak Profiling**: a bounded 30-scrub check showed 0 MB heap growth; long-run leak freedom remains unverified.

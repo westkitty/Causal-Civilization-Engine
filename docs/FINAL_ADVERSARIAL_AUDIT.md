@@ -139,7 +139,7 @@ Critical: C1–C4. High: H1–H6. Medium: M1–M7. Low: L1–L3.
 - Root cause: missing booking line.
 - Failure scenario: in any taxation year (`year % 5 === 0`) a controlled settlement's `wealthBefore + credits − debits ≠ wealthAfter`.
 - Correction: book `s.__transientReconciliation.taxesPaid += (beforeWealth − s.wealth)`. Added (a) a full-year, per-settlement reconciliation test over the real simulation asserting `wealthBefore + exportRevenue + productionIncome + naturalGrowth − importExpense − transportExpense − investment − losses − taxesPaid == wealthAfter` for every settlement that existed at the start of the year, and (b) a **direct** `updatePolitics` taxation test that pre-creates a government and asserts the tax booking reconciles.
-- Note: during validation I discovered taxation **never fires in the full simulation for any tested seed** because the politics subsystem is dead (see **M8**). The booking fix is therefore currently unreached in the full run but is correct and directly unit-tested; it prevents a latent reconciliation break if politics is ever activated.
+- Historical note, superseded on 2026-07-15: taxation did not fire in the then-current full simulation because politics had not activated (see **M8**). The later bounded politics pass activated and verified natural taxation; the direct booking test remains useful isolated reconciliation coverage.
 - Status: **FIXED (defensive, directly unit-tested)** — commit `343ab83`.
 - Residual risk: settlements founded mid-year have no reconciliation record for that year (by construction) and are excluded from the full-sim assertion; documented.
 
@@ -410,3 +410,31 @@ No new Critical or High application defects survived the resweep.
 - E2E (`npm run test:e2e`): **5 passed** in headless Chromium in 15.3 min; no page
   errors or console errors. Known warning: `PCFSoftShadowMap` deprecation.
 - CI (`.github/workflows/ci.yml`): result reported in the session's final report.
+
+### 2026-07-15 UI/UX polish amendment
+
+- The bounded UI pass is specified and closed in `docs/UI_UX_POLISH_AUDIT.md`; its
+  baseline ledger preserves 2 Blocker, 12 Major, 4 Minor, and 2 Polish findings.
+  Direct before/after review and focused semantic browser checks resolved all 20.
+- The Three.js world/camera origin mismatch and undefined utility-class shell were
+  corrected without changing simulation data, branch semantics, renderer lifetime,
+  or Worker architecture. The deprecated shadow-map warning was removed by selecting
+  the supported `PCFShadowMap` constant.
+- The interface now has semantic tokens, local-only typography/assets, real Worker
+  progress and recovery, explicit overlay legends, ledger-backed timeline markers,
+  branch preview/lockout/ready states, labeled split comparison, expanded Inspector
+  entity/fallback states, responsive trays/sheets, visible focus, reduced motion, and
+  non-color-only state labels.
+- `docs/UI_ASSET_MANIFEST.md` records the original local branch/terrain mark, retained
+  Lucide system, CSS state/legend assets, removed starter SVGs, and the inactive
+  unreferenced `hero.png` boundary.
+- Final bounded validation: lint 0 errors/0 warnings (0.78 s); Vitest 56/56 (228.06 s)
+  using file-level serialization to avoid CPU-contention timeouts; production build
+  success (6.67 s; JS 828.06 kB / 222.89 kB gzip, CSS 27.13 kB / 5.78 kB gzip,
+  Worker 43.06 kB); focused UI Playwright 1/1 in approximately 3.7 minutes with the
+  real Worker and no page/console errors.
+- The final six-test aggregate Playwright sweep was started, then intentionally
+  interrupted when the user requested the minimum required testing. It is therefore
+  not represented as a fresh full-suite pass. The prior five-test evidence above
+  remains historical evidence, and the focused UI test is the current UI acceptance
+  gate.

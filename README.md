@@ -3,7 +3,7 @@
 An explorable historical simulation in which geography, infrastructure, settlement, culture, wealth, and political control emerge from interacting systems. The primary feature of the engine is support for counterfactual resimulation, allowing users to suppress events (e.g. bridge construction) and trace the resulting chronological divergence.
 
 ## Tech Stack
-- **Frontend**: React 19, TypeScript, Tailwind CSS / Vanilla CSS, Lucide React
+- **Frontend**: React 19, TypeScript, semantic tokenized CSS, Lucide React
 - **Rendering**: Three.js WebGL (low-poly custom render loops)
 - **Simulation**: Asynchronous ES-module Web Worker thread with synchronous fallback for test runs
 - **Testing**: Vitest (Node kernel logic + JSDOM UI mount) and Playwright (real-browser Chromium acceptance)
@@ -40,7 +40,7 @@ for the full audit and evidence.
 - Politics remains deterministic across identical runs and survives both Year-0 and
   post-bootstrap counterfactual resimulation with exact pre-intervention hashes.
 
-**Real-browser verified** (Playwright, headless Chromium, 5 tests)
+**Real-browser verified** (Playwright, headless Chromium; five established tests plus one focused UI-polish test)
 - WebGL context initializes; terrain, rivers, settlements, roads, and the bridge
   render (verified via `renderer.info` and a scene census).
 - Counterfactual bridge suppression runs end-to-end via the real Worker, producing a
@@ -52,6 +52,35 @@ for the full audit and evidence.
   the Political overlay renders multiple terrain colors from that state, survives
   timeline scrubbing, and preserves exact pre-intervention politics across the bridge
   counterfactual.
+- The focused UI test verifies loading-time resize, shell geometry, minimum target
+  sizing, overlay legends, Inspector entity/fallback states, keyboard focus, reduced
+  motion, mobile containment, branch lockout, comparison labels/divider, suppression,
+  and error recovery.
+
+## Interface and interaction model
+
+The application is organized as a map-first causal-history workbench:
+
+- the shell names simulation readiness, current year, active overlay, branch state,
+  seed replacement behavior, and the primary available action;
+- baseline and counterfactual Worker runs expose real percentage progress without
+  inventing completion estimates;
+- every overlay has a pressed state, visible label, and dynamic legend, including
+  named political factions and shape-coded infrastructure states;
+- the timeline provides first/previous/play/next/final controls, an accessible year
+  range, responsive ticks, real ledger-event buckets, and the Year-10 intervention;
+- split comparison labels baseline and counterfactual directly on the map and keeps
+  the divider keyboard-operable;
+- Inspector supports empty, settlement, road, bridge, government, scar, missing,
+  causal-evidence, and branch-comparison states;
+- tablet and narrow layouts preserve map space with a collapsible control tray and
+  a dismissible Inspector sheet.
+
+The interface uses local assets and font stacks only. It provides practical Web
+Content Accessibility Guidelines (WCAG) AA-oriented contrast, visible focus,
+semantic controls and landmarks, live status/error announcements, reduced-motion
+handling, and approximately 44×44 CSS-pixel targets. This is not a claim of
+universal accessibility or mobile-performance optimization.
 
 **Measured (single headless run, software WebGL / SwiftShader — not GPU)**
 - ~9 FPS, ~112 ms average / ~168 ms worst frame time; 141 draw calls; 32,432
@@ -79,6 +108,8 @@ npm run dev
 ```bash
 npm run test
 ```
+Vitest files run serially so long deterministic simulations do not compete for the
+same CPU budget and fail their assertion-preserving time limits spuriously.
 
 ### Build Production Bundle
 ```bash

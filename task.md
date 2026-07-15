@@ -65,6 +65,17 @@
   - `[x]` Preserve deterministic hashes, snapshot replay, Year-0 branching, and exact post-bootstrap branch prefixes
   - `[x]` Verify real Worker state and non-neutral Political rendering in focused Chromium coverage
   - `[x]` Leave wars, diplomacy, elections, timeline storage, Worker payloads, and the broader performance architecture untouched
+- `[x]` **Phase 15: Bounded UI/UX and interface-asset polish**
+  - `[x]` Capture loading, baseline, Inspector, Political, branch, comparison, and suppressed-bridge before states at required viewports
+  - `[x]` Publish a severity-ranked audit and freeze the bounded implementation list before source changes
+  - `[x]` Center the Three.js world/camera and replace undefined utility-class layout with semantic CSS tokens
+  - `[x]` Clarify application identity, real Worker progress, seed replacement, active branch/overlay/year, branch target, and recovery states
+  - `[x]` Add dynamic overlay legends, named political controls, infrastructure state keys, comparison labels, and visible divider handle
+  - `[x]` Rework timeline controls, event buckets, intervention marker, keyboard operation, disabled states, and narrow layout
+  - `[x]` Reorganize Inspector and cover empty, settlement, road, bridge, government, scar, missing, causal, evidence, and comparison states
+  - `[x]` Add responsive control tray/Inspector sheet, visible focus, live regions, reduced motion, no-color-only cues, and 44 px targets
+  - `[x]` Replace external font requests/default favicon with local typography and one original branching-terrain SVG mark
+  - `[x]` Add focused Worker-backed Playwright UI verification and direct before/after screenshot review
 
 ## Legend
 

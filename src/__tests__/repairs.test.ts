@@ -431,10 +431,8 @@ describe("Full-year wealth reconciliation (H4)", () => {
     expect(checked).toBeGreaterThan(0);
   }, 40000);
 
-  // Direct proof that the tax-booking fix reconciles. Taxation is dead in the
-  // full simulation (see audit M8: governments are never created), so this
-  // exercises updatePolitics on a controlled state with a pre-created
-  // government whose capital is the taxed settlement.
+  // Direct tax-booking reconciliation coverage complements the natural
+  // politics-active simulation tests by isolating a controlled settlement.
   it("books taxation into reconciliation so a taxed settlement reconciles", () => {
     const state = baseGrid(5, 5);
     state.settlements = { s_cap: mkSettlement("s_cap", 12, 300, 1000) };
@@ -519,7 +517,7 @@ describe("Politics activation and lifecycle", () => {
     expect(deterministicHash(s1)).toBe(deterministicHash(s2));
     expect(deterministicHash(l1.events)).toBe(deterministicHash(l2.events));
     expect(b1.yearHashes).toEqual(b2.yearHashes);
-  });
+  }, 15_000);
 
   it("reconciles taxation exactly, links wealth events, and respects the wealth floor", () => {
     const state = baseGrid(5, 5);

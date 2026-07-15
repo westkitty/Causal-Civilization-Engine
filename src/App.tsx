@@ -7,7 +7,7 @@ import { MapViewer } from "./rendering/MapViewer";
 import { Timeline } from "./ui/Timeline";
 import { DivergenceControls } from "./ui/DivergenceControls";
 import { Inspector } from "./ui/Inspector";
-import { GitFork, Activity } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Database, GitFork, RotateCcw } from "lucide-react";
 import { simulateYear } from "./core/scheduler";
 import { generateWorld } from "./geography/terrain";
 import { resimulateBranch } from "./core/runner";
@@ -41,6 +41,7 @@ function App() {
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulatedProgress, setSimulatedProgress] = useState(0);
   const [simulationError, setSimulationError] = useState<string | null>(null);
+  const [simulationOperation, setSimulationOperation] = useState<"baseline" | "branch" | null>(null);
 
   // Worker lifecycle guards: only the latest request may commit results, prior
   // workers are terminated, and no state is written after unmount.
@@ -63,6 +64,8 @@ function App() {
     setIsSimulating(true);
     setSimulatedProgress(0);
     setSimulationError(null);
+    setSimulationOperation("baseline");
+    setSelectedEntityId(null);
 
     const commitBaseline = (result: any) => {
       statesListARef.current = result.cachedStates;
@@ -84,6 +87,7 @@ function App() {
       setComparisonMode("none");
       setCurrentYear(0);
       setIsSimulating(false);
+      setSimulationOperation(null);
     };
 
     const worker = spawnWorker();
@@ -105,6 +109,7 @@ function App() {
           console.error("Worker error during baseline:", message);
           setSimulationError(`Baseline simulation failed: ${message}`);
           setIsSimulating(false);
+          setSimulationOperation(null);
           worker.terminate();
           if (activeWorkerRef.current === worker) activeWorkerRef.current = null;
         }
@@ -160,6 +165,14 @@ function App() {
         const st = statesListARef.current[currentYear] || statesListARef.current[0];
         return st ? Object.keys(st.settlements)[0] : null;
       },
+      firstRouteId: () => {
+        const st = statesListARef.current[currentYear] || statesListARef.current[0];
+        return st ? Object.keys(st.routes)[0] ?? null : null;
+      },
+      firstGovernmentId: () => {
+        const st = statesListARef.current[currentYear] || statesListARef.current[0];
+        return st ? Object.keys(st.governments)[0] ?? null : null;
+      },
       activeBridgeId: () => {
         const states = statesListARef.current;
         for (const y of Object.keys(states).map(Number).sort((a, b) => a - b)) {
@@ -194,6 +207,8 @@ function App() {
       currentYear: () => currentYear,
       hasSecondBranch: () => hasSecondBranch,
       activeOverlay: () => activeOverlay,
+      showSimulationError: (message: string) => setSimulationError(message),
+      clearSimulationError: () => setSimulationError(null),
     };
   }, [currentYear, hasSecondBranch, activeOverlay]);
 
@@ -259,6 +274,7 @@ function App() {
     setIsSimulating(true);
     setSimulatedProgress(0);
     setSimulationError(null);
+    setSimulationOperation("branch");
 
     const commitBranch = (result: any) => {
       const subBranch = new Branch("suppress_bridge_branch", "main", intervention);
@@ -276,6 +292,7 @@ function App() {
       setComparisonMode("swipe");
       setCurrentYear(10);
       setIsSimulating(false);
+      setSimulationOperation(null);
     };
 
     const worker = spawnWorker();
@@ -305,6 +322,7 @@ function App() {
           console.error("Worker error during branch resimulation:", message);
           setSimulationError(`Counterfactual resimulation failed: ${message}`);
           setIsSimulating(false);
+          setSimulationOperation(null);
           worker.terminate();
           if (activeWorkerRef.current === worker) activeWorkerRef.current = null;
         }
@@ -333,112 +351,234 @@ function App() {
   const activeStateA = statesListARef.current[currentYear];
   const activeStateB = statesListBRef.current[currentYear];
 
-  const parentBridge = activeStateA ? Object.values(activeStateA.bridges).find(b => b.status === "active") : null;
-  const bridgeExists = parentBridge !== null;
+  const targetBridgeId = findTargetBridgeId();
+  const overlayLabels = {
+    none: "Terrain",
+    politics: "Political",
+    moisture: "Moisture",
+    ore: "Metal ore",
+    timber: "Timber",
+  } as const;
+  const notableEventTypes = new Set([
+    "founding",
+    "abandonment",
+    "bridge_construction",
+    "road_construction",
+    "political_founding",
+    "capital_relocation",
+    "flood",
+    "epidemic",
+    "famine",
+  ]);
+  const markerBuckets = new Map<number, { count: number; types: Set<string> }>();
+  if (activeStateA) {
+    for (const event of ledgerARef.current.getAllEvents()) {
+      if (!notableEventTypes.has(event.eventType)) continue;
+      const bucket = Math.min(400, Math.floor(event.time.year / 10) * 10);
+      const current = markerBuckets.get(bucket) ?? { count: 0, types: new Set<string>() };
+      current.count += 1;
+      current.types.add(event.eventType.replaceAll("_", " "));
+      markerBuckets.set(bucket, current);
+    }
+  }
+  const timelineMarkers = [...markerBuckets.entries()]
+    .sort(([yearA], [yearB]) => yearA - yearB)
+    .map(([year, marker]) => ({
+      year,
+      count: marker.count,
+      label: `${marker.count} recorded event${marker.count === 1 ? "" : "s"}: ${[...marker.types].join(", ")}`,
+    }));
+  const governments = activeStateA
+    ? Object.values(activeStateA.governments).map((government) => ({ id: government.id, name: government.name }))
+    : [];
+  const branchDisplay = hasSecondBranch
+    ? comparisonMode === "swipe" ? "Comparing histories" : "Baseline view"
+    : "Baseline history";
+  const operationTitle = simulationOperation === "branch"
+    ? "Recompiling Causal History..."
+    : "Building baseline history";
+  const operationDetail = simulationOperation === "branch"
+    ? "Replaying Years 10–400 with the bridge-construction event suppressed. The baseline map remains available."
+    : "Running the deterministic 400-year simulation in a Worker. Seed changes replace the active run.";
 
   return (
-    <div className="w-full h-full relative bg-[#090d16] flex flex-col select-none">
-      {activeStateA && (
-        <MapViewer
-          stateA={activeStateA}
-          stateB={activeStateB}
-          comparisonMode={comparisonMode}
-          swipePosition={swipePosition}
-          selectedEntityId={selectedEntityId}
-          onSelectEntity={setSelectedEntityId}
-          activeOverlay={activeOverlay}
-        />
-      )}
-
-      {/* Top Header Panel */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 w-[450px] bg-slate-900/80 backdrop-blur-md border border-white/10 rounded-2xl p-4 shadow-2xl flex flex-col gap-2">
-        <div className="flex justify-between items-center">
-          <div className="flex flex-col">
-            <span className="text-[10px] text-cyan-400 font-bold tracking-widest uppercase flex items-center gap-1">
-              <Activity size={12} /> Explorable Counterfactual Engine
-            </span>
-            <h1 className="text-sm font-extrabold text-white m-0 tracking-wide">CAUSAL CIVILIZATION ENGINE</h1>
-          </div>
-          <div className="flex items-center gap-1.5 bg-white/5 border border-white/10 rounded-lg px-2 py-1">
-            <span className="text-[9px] text-slate-400 uppercase font-mono">Seed</span>
-            <input
-              type="text"
-              value={seed}
-              onChange={(e) => setSeed(e.target.value)}
-              className="bg-transparent border-none text-[10px] font-mono text-cyan-300 w-28 focus:outline-none"
-            />
+    <main className="app-shell">
+      <header className="app-header">
+        <div className="brand-lockup">
+          <img src="/favicon.svg" alt="" aria-hidden="true" width="40" height="40" />
+          <div>
+            <span className="eyebrow">Explorable counterfactual simulator</span>
+            <h1>CAUSAL CIVILIZATION ENGINE</h1>
           </div>
         </div>
 
-        <div className="border-t border-white/10 pt-2.5 mt-1.5 flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-slate-400">Timeline Branch:</span>
-            <span className={`text-[10px] px-2 py-0.5 rounded font-mono font-semibold ${
-              hasSecondBranch ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30" : "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30"
-            }`}>
-              {hasSecondBranch ? "suppress_bridge_branch" : "main"}
-            </span>
+        <div className="header-status" aria-label="Current simulation state">
+          <div className="status-item">
+            <span className="eyebrow">Simulation</span>
+            <strong className="status-with-icon" aria-live="polite">
+              {simulationError ? <AlertTriangle aria-hidden="true" /> : isSimulating ? <Database aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}
+              {simulationError ? "Needs attention" : isSimulating ? operationTitle : activeStateA ? "Ready" : "Preparing"}
+            </strong>
           </div>
+          <div className="status-item">
+            <span className="eyebrow">Branch</span>
+            <strong>{branchDisplay}</strong>
+            <code>{hasSecondBranch ? "suppress_bridge_branch" : "main"}</code>
+          </div>
+          <div className="status-item">
+            <span className="eyebrow">Overlay</span>
+            <strong>{overlayLabels[activeOverlay]}</strong>
+          </div>
+          <div className="status-item status-item--year">
+            <span className="eyebrow">Current year</span>
+            <strong>{currentYear}</strong>
+          </div>
+        </div>
 
-          {bridgeExists && !hasSecondBranch && (
-            <button
-              onClick={triggerIntervention}
-              className="bg-indigo-650 hover:bg-indigo-600 border border-indigo-400/40 text-white font-semibold text-xs px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all shadow-lg pulse-glow"
-            >
-              <GitFork size={13} /> Suppress Bridge Construction
-            </button>
+        <div className="seed-control">
+          <label htmlFor="simulation-seed">Simulation seed</label>
+          <input
+            id="simulation-seed"
+            type="text"
+            value={seed}
+            onChange={(event) => setSeed(event.target.value)}
+            aria-describedby="seed-help"
+            spellCheck="false"
+          />
+          <span id="seed-help">Editing replaces the active baseline run.</span>
+        </div>
+
+        <div className="primary-action">
+          {targetBridgeId && !hasSecondBranch ? (
+            <>
+              <div className="primary-action__copy" id="branch-action-help">
+                <span className="eyebrow">Counterfactual at Year 10</span>
+                <span>Suppress <code>{targetBridgeId}</code> and create a new branch.</span>
+              </div>
+              <button
+                type="button"
+                className="action-button action-button--branch"
+                onClick={triggerIntervention}
+                aria-describedby="branch-action-help"
+                disabled={isSimulating}
+              >
+                <GitFork aria-hidden="true" />
+                {simulationOperation === "branch" ? "Recomputing branch" : "Suppress Bridge Construction"}
+              </button>
+            </>
+          ) : hasSecondBranch ? (
+            <div className="branch-ready" role="status">
+              <CheckCircle2 aria-hidden="true" />
+              <span><strong>Counterfactual ready.</strong> Compare it or return to baseline only.</span>
+            </div>
+          ) : (
+            <div className="primary-action__copy">
+              <span className="eyebrow">Counterfactual</span>
+              <span>{isSimulating ? "Available after the baseline is ready." : "No bridge is available to suppress in this history."}</span>
+            </div>
           )}
         </div>
-      </div>
+      </header>
 
-      <DivergenceControls
-        comparisonMode={comparisonMode}
-        onChangeComparisonMode={setComparisonMode}
-        activeOverlay={activeOverlay}
-        onChangeOverlay={setActiveOverlay}
-        hasSecondBranch={hasSecondBranch}
-        swipePosition={swipePosition}
-        onChangeSwipePosition={setSwipePosition}
-      />
+      <section className={`workspace ${activeStateA ? "" : "workspace--map-only"}`} aria-label="Simulation workspace">
+        <section className="map-stage" aria-label="Map and comparison workspace">
+          {activeStateA ? (
+            <MapViewer
+              stateA={activeStateA}
+              stateB={activeStateB}
+              comparisonMode={comparisonMode}
+              swipePosition={swipePosition}
+              selectedEntityId={selectedEntityId}
+              onSelectEntity={setSelectedEntityId}
+              activeOverlay={activeOverlay}
+            />
+          ) : (
+            <div className="map-empty" aria-hidden="true" />
+          )}
 
-      {selectedEntityId && activeStateA && (
-        <Inspector
-          stateA={activeStateA}
-          stateB={activeStateB}
-          ledgerA={ledgerARef.current}
-          ledgerB={ledgerBRef.current}
-          selectedEntityId={selectedEntityId}
-          onClose={() => setSelectedEntityId(null)}
-          onJumpToYear={setCurrentYear}
-        />
-      )}
+          <DivergenceControls
+            comparisonMode={comparisonMode}
+            onChangeComparisonMode={setComparisonMode}
+            activeOverlay={activeOverlay}
+            onChangeOverlay={setActiveOverlay}
+            hasSecondBranch={hasSecondBranch}
+            swipePosition={swipePosition}
+            onChangeSwipePosition={setSwipePosition}
+            governments={governments}
+            onSelectEntity={setSelectedEntityId}
+            disabled={!activeStateA}
+          />
+
+          <p className="map-help">
+            <span aria-hidden="true">↔</span> Drag to orbit · scroll to zoom · select a settlement, road, or bridge to inspect
+          </p>
+
+          {comparisonMode === "swipe" && activeStateB && (
+            <div className="comparison-map-overlay" aria-hidden="true">
+              <span className="comparison-map-label comparison-map-label--baseline">Baseline · main</span>
+              <span className="comparison-map-label comparison-map-label--branch">Counterfactual · bridge suppressed</span>
+              <span className="comparison-divider-line" style={{ left: `${swipePosition}%` }}>
+                <i />
+              </span>
+            </div>
+          )}
+
+          {isSimulating && (
+            <section className="loader-card" role="status" aria-live="polite" aria-atomic="true">
+              <div className="causal-loader" aria-hidden="true"><i /><i /><i /></div>
+              <span className="eyebrow">{simulationOperation === "branch" ? "Counterfactual branch" : "Baseline history"}</span>
+              <h2>{operationTitle}</h2>
+              <p>{operationDetail}</p>
+              <progress max="100" value={simulatedProgress} aria-label={`${operationTitle} progress`} />
+              <div className="loader-card__progress">
+                <span>Worker progress</span>
+                <strong>Progress: {simulatedProgress}%</strong>
+              </div>
+            </section>
+          )}
+
+          {simulationError && (
+            <section className="error-card" role="alert" aria-labelledby="simulation-error-title">
+              <AlertTriangle aria-hidden="true" />
+              <div>
+                <span className="eyebrow">Simulation stopped</span>
+                <h2 id="simulation-error-title">The history could not be completed</h2>
+                <p>{simulationError}</p>
+                <div className="error-card__actions">
+                  <button type="button" className="action-button" onClick={runSimulationA}>
+                    <RotateCcw aria-hidden="true" /> Retry baseline
+                  </button>
+                  <button type="button" className="text-button" onClick={() => setSimulationError(null)}>Dismiss</button>
+                </div>
+              </div>
+            </section>
+          )}
+        </section>
+
+        {activeStateA && (
+          <Inspector
+            stateA={activeStateA}
+            stateB={activeStateB}
+            ledgerA={ledgerARef.current}
+            ledgerB={ledgerBRef.current}
+            selectedEntityId={selectedEntityId}
+            onClose={() => setSelectedEntityId(null)}
+            onJumpToYear={setCurrentYear}
+          />
+        )}
+      </section>
 
       <Timeline
         currentYear={currentYear}
         maxYear={400}
         isPlaying={isPlaying}
+        disabled={!activeStateA || isSimulating}
+        markers={timelineMarkers}
         onTogglePlay={() => setIsPlaying(!isPlaying)}
         onSetYear={setCurrentYear}
         interventionYear={hasSecondBranch ? 10 : undefined}
       />
-
-      {isSimulating && (
-        <div className="absolute inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
-          <div className="loader-spin" />
-          <span className="text-sm font-semibold text-cyan-300 tracking-wider">Recompiling Causal History...</span>
-          <span className="text-xs text-slate-400 font-mono">Progress: {simulatedProgress}%</span>
-        </div>
-      )}
-
-      {simulationError && (
-        <div
-          role="alert"
-          className="absolute bottom-28 left-1/2 -translate-x-1/2 z-40 bg-red-950/90 border border-red-500/40 text-red-200 text-xs font-mono px-4 py-2 rounded-xl shadow-lg"
-        >
-          {simulationError}
-        </div>
-      )}
-    </div>
+    </main>
   );
 }
 
