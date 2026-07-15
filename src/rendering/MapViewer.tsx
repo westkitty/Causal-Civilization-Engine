@@ -208,6 +208,30 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     };
     animate();
 
+    // DEV-only diagnostics hook for real-browser (Playwright) verification:
+    // reports live renderer stats and a census of scene content by kind.
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__cceDiag = () => {
+        const info = rendererRef.current?.info.render;
+        const counts: Record<string, number> = {};
+        sceneARef.current?.traverse((o) => {
+          const kind = (o.userData as { kind?: string })?.kind;
+          if (kind) counts[kind] = (counts[kind] || 0) + 1;
+        });
+        const canvas = rendererRef.current?.domElement;
+        return {
+          drawCalls: info?.calls ?? 0,
+          triangles: info?.triangles ?? 0,
+          lines: info?.lines ?? 0,
+          points: info?.points ?? 0,
+          canvasWidth: canvas?.width ?? 0,
+          canvasHeight: canvas?.height ?? 0,
+          webglContext: !!(canvas && (canvas.getContext("webgl2") || canvas.getContext("webgl"))),
+          kinds: counts,
+        };
+      };
+    }
+
     return () => {
       window.removeEventListener("resize", handleResize);
       if (rendererRef.current) {
@@ -336,6 +360,7 @@ function buildVisualWorld(
   });
 
   const terrainMesh = new THREE.Mesh(geom, terrainMaterial);
+  terrainMesh.userData.kind = "terrain";
   terrainMesh.position.set(-width / 2, 0, -height / 2);
   terrainMesh.receiveShadow = true;
   scene.add(terrainMesh);
@@ -355,6 +380,7 @@ function buildVisualWorld(
       
       const rGeom = new THREE.BoxGeometry(1.2, 0.2, 1.2);
       const rMesh = new THREE.Mesh(rGeom, riverMaterial);
+      rMesh.userData.kind = "river";
       rMesh.position.set(rx, ry, rz);
       scene.add(rMesh);
     }
@@ -376,6 +402,7 @@ function buildVisualWorld(
 
       const roadGeom = new THREE.BoxGeometry(0.8, 0.1, 0.8);
       const roadMesh = new THREE.Mesh(roadGeom, roadMaterial);
+      roadMesh.userData.kind = "road";
       roadMesh.position.set(rx, ry, rz);
       scene.add(roadMesh);
     }
@@ -397,6 +424,7 @@ function buildVisualWorld(
     const sy = state.elevation[s.cellId] * 0.04;
 
     const settlementGroup = new THREE.Group();
+    settlementGroup.userData.kind = "settlement";
     settlementGroup.position.set(sx, sy, sz);
 
     // Spawn a small cluster of houses based on population size
@@ -447,6 +475,7 @@ function buildVisualWorld(
     const by = state.elevation[bridge.cellId] * 0.04;
 
     const bridgeGroup = new THREE.Group();
+    bridgeGroup.userData.kind = "bridge";
     bridgeGroup.position.set(bx, by, bz);
 
     // Draw an arch span bridge
@@ -480,6 +509,7 @@ function buildVisualWorld(
       const ry = state.elevation[scar.cellId] * 0.04;
 
       const ruinsGroup = new THREE.Group();
+      ruinsGroup.userData.kind = "ruin";
       ruinsGroup.position.set(rx, ry, rz);
 
       // Create collapsed stone blocks

@@ -149,6 +149,30 @@ function App() {
     };
   }, []);
 
+  // DEV-only test seam for real-browser (Playwright) verification. Lets the
+  // acceptance suite drive entity selection (Inspector) and resolve entity ids
+  // deterministically without pixel-perfect canvas raycasting.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    (window as unknown as Record<string, unknown>).__cce = {
+      selectEntity: (id: string | null) => setSelectedEntityId(id),
+      firstSettlementId: () => {
+        const st = statesListARef.current[currentYear] || statesListARef.current[0];
+        return st ? Object.keys(st.settlements)[0] : null;
+      },
+      activeBridgeId: () => {
+        const states = statesListARef.current;
+        for (const y of Object.keys(states).map(Number).sort((a, b) => a - b)) {
+          const b = Object.values(states[y].bridges).find(br => br.status === "active");
+          if (b) return b.id;
+        }
+        return null;
+      },
+      currentYear: () => currentYear,
+      hasSecondBranch: () => hasSecondBranch,
+    };
+  }, [currentYear, hasSecondBranch]);
+
   // 2. Playback logic
   useEffect(() => {
     if (isPlaying) {

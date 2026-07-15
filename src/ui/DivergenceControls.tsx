@@ -122,6 +122,7 @@ export const DivergenceControls: React.FC<DivergenceControlsProps> = ({
                   min="0"
                   max="100"
                   value={swipePosition}
+                  aria-label="Comparison divider"
                   onChange={(e) => onChangeSwipePosition(Number(e.target.value))}
                   className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
                 />

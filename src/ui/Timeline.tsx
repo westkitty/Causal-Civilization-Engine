@@ -29,6 +29,7 @@ export const Timeline: React.FC<TimelineProps> = ({
       <div className="flex items-center gap-3">
         <button
           onClick={onTogglePlay}
+          aria-label={isPlaying ? "Pause" : "Play"}
           className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
             isPlaying
               ? "bg-cyan-500 text-slate-950 hover:bg-cyan-400"
@@ -40,6 +41,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         <button
           onClick={() => onSetYear(0)}
           title="Reset to Year 0"
+          aria-label="Reset to Year 0"
           className="w-9 h-9 rounded-full flex items-center justify-center bg-white/5 text-slate-400 hover:text-white hover:bg-white/10 transition-all"
         >
           <RotateCcw size={16} />
@@ -60,6 +62,7 @@ export const Timeline: React.FC<TimelineProps> = ({
             min="0"
             max={maxYear}
             value={currentYear}
+            aria-label="Timeline year"
             onChange={(e) => onSetYear(Number(e.target.value))}
             className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400 z-10"
           />
