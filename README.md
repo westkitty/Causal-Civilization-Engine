@@ -13,7 +13,7 @@ An explorable historical simulation in which geography, infrastructure, settleme
 Each claim is classified by how it was verified. See `docs/FINAL_ADVERSARIAL_AUDIT.md`
 for the full audit and evidence.
 
-**Unit-test verified** (Vitest, 46 tests)
+**Unit-test verified** (Vitest, 56 tests)
 - Exact Float64 DataView bitwise hashing produces exact repeatability for identical
   runs in the tested local JavaScript runtime (V8 via Node/Chromium). Cross-engine
   determinism is **not** claimed.
@@ -30,8 +30,17 @@ for the full audit and evidence.
 - Worker stale-response rejection logic (request-id guard).
 - Branch resimulation parity: the branch is simulated exactly once and its per-year
   state cache matches the recorded year hashes.
+- Politics bootstrap: the standard deterministic simulation creates two governments
+  after Year-0 settlements exist; capitals resolve to active settlements and every
+  125×125 political-control field is finite and nonuniform.
+- Politics lifecycle: government founding is nonduplicating, five-year taxation
+  reconciles settlement reductions exactly to treasury increases (including the
+  100-wealth floor), and invalid capitals relocate once to the largest eligible
+  controlled settlement when one exists.
+- Politics remains deterministic across identical runs and survives both Year-0 and
+  post-bootstrap counterfactual resimulation with exact pre-intervention hashes.
 
-**Real-browser verified** (Playwright, headless Chromium, 4 tests)
+**Real-browser verified** (Playwright, headless Chromium, 5 tests)
 - WebGL context initializes; terrain, rivers, settlements, roads, and the bridge
   render (verified via `renderer.info` and a scene census).
 - Counterfactual bridge suppression runs end-to-end via the real Worker, producing a
@@ -39,10 +48,14 @@ for the full audit and evidence.
   divider, and a suppressed-bridge Inspector.
 - Camera controls, viewport resize, overlays, timeline play/pause and scrub, and the
   Inspector all respond; no serious console or page errors.
+- The real Worker produces governments, valid capitals, and nonuniform control data;
+  the Political overlay renders multiple terrain colors from that state, survives
+  timeline scrubbing, and preserves exact pre-intervention politics across the bridge
+  counterfactual.
 
 **Measured (single headless run, software WebGL / SwiftShader — not GPU)**
-- ~11 FPS, ~89 ms average / ~149 ms worst frame time; 141 draw calls; 32,432
-  triangles; 1280×720 canvas; ~803 MB JS heap; ~75 s for the initial 400-year
+- ~9 FPS, ~112 ms average / ~168 ms worst frame time; 141 draw calls; 32,432
+  triangles; 1280×720 canvas; ~905 MB JS heap; ~107 s for the initial 400-year
   baseline simulation. These are software-rendering figures; a real GPU will differ
   substantially. **60 FPS is not claimed.**
 
@@ -50,11 +63,10 @@ for the full audit and evidence.
 - Cross-engine (SpiderMonkey / JavaScriptCore) determinism.
 - GPU-accelerated performance and long-run memory-leak freedom (only a bounded
   30-scrub check was run: 0 MB heap growth).
-- The **politics subsystem is inert**: governments are never created (a year-0
-  scheduler-ordering issue), so taxation, control-field borders, and capital
-  succession do not occur and the "Political" overlay renders uniform neutral. This
-  is documented in the audit (finding M8) and deliberately left unchanged, as
-  altering the political simulation is out of scope.
+- New political mechanics beyond the repaired existing subsystem (wars, diplomacy,
+  treaties, elections, and additional government types) remain out of scope.
+- The broader timeline-storage, Worker-payload, and memory/performance redesign remains
+  deferred; activating politics does not change those documented limitations.
 
 ## Verification & Execution
 

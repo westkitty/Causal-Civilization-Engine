@@ -46,11 +46,13 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   const swipePositionRef = useRef(swipePosition);
   const stateBRef = useRef(stateB);
   const onSelectEntityRef = useRef(onSelectEntity);
+  const activeOverlayRef = useRef(activeOverlay);
   useEffect(() => {
     comparisonModeRef.current = comparisonMode;
     swipePositionRef.current = swipePosition;
     stateBRef.current = stateB;
     onSelectEntityRef.current = onSelectEntity;
+    activeOverlayRef.current = activeOverlay;
   });
 
   useEffect(() => {
@@ -214,9 +216,20 @@ export const MapViewer: React.FC<MapViewerProps> = ({
       (window as unknown as Record<string, unknown>).__cceDiag = () => {
         const info = rendererRef.current?.info.render;
         const counts: Record<string, number> = {};
+        const terrainColors = new Set<string>();
         sceneARef.current?.traverse((o) => {
           const kind = (o.userData as { kind?: string })?.kind;
           if (kind) counts[kind] = (counts[kind] || 0) + 1;
+          if (kind === "terrain" && o instanceof THREE.Mesh) {
+            const colors = o.geometry.getAttribute("color");
+            for (let i = 0; i < colors.count; i++) {
+              terrainColors.add([
+                colors.getX(i).toFixed(6),
+                colors.getY(i).toFixed(6),
+                colors.getZ(i).toFixed(6),
+              ].join(":"));
+            }
+          }
         });
         const canvas = rendererRef.current?.domElement;
         return {
@@ -228,6 +241,8 @@ export const MapViewer: React.FC<MapViewerProps> = ({
           canvasHeight: canvas?.height ?? 0,
           webglContext: !!(canvas && (canvas.getContext("webgl2") || canvas.getContext("webgl"))),
           kinds: counts,
+          activeOverlay: activeOverlayRef.current,
+          terrainDistinctColors: terrainColors.size,
         };
       };
     }

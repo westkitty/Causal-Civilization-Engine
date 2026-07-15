@@ -168,10 +168,34 @@ function App() {
         }
         return null;
       },
+      politicsAt: (year: number = currentYear, branchId: "main" | "suppress_bridge_branch" = "main") => {
+        const isBranch = branchId === "suppress_bridge_branch";
+        const state = (isBranch ? statesListBRef.current : statesListARef.current)[year];
+        if (!state) return null;
+        const branch = isBranch ? branchBRef.current : branchARef.current;
+        const ledger = isBranch ? ledgerBRef.current : ledgerARef.current;
+        return {
+          year: state.year,
+          mapCells: state.mapWidth * state.mapHeight,
+          governments: structuredClone(state.governments),
+          activeSettlementIds: Object.keys(state.settlements)
+            .filter(id => !state.settlements[id].abandoned)
+            .sort(),
+          politicalControl: structuredClone(state.politicalControl),
+          stateHash: branch?.yearHashes[year] ?? null,
+          politicalFoundingEventIds: ledger
+            ? ledger.getAllEvents()
+              .filter(event => event.eventType === "political_founding")
+              .map(event => event.eventId)
+              .sort()
+            : [],
+        };
+      },
       currentYear: () => currentYear,
       hasSecondBranch: () => hasSecondBranch,
+      activeOverlay: () => activeOverlay,
     };
-  }, [currentYear, hasSecondBranch]);
+  }, [currentYear, hasSecondBranch, activeOverlay]);
 
   // 2. Playback logic
   useEffect(() => {

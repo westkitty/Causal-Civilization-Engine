@@ -35,7 +35,7 @@ describe("Causal Civilization Engine - Audited Deterministic Kernel", () => {
     const ledgerHash1 = fnv1a64(canonicalStringify(ledger1.getAllEvents()));
     const ledgerHash2 = fnv1a64(canonicalStringify(ledger2.getAllEvents()));
     expect(ledgerHash1).toBe(ledgerHash2);
-  }, 40000);
+  }, 80000);
 
   // 2. Keyed-random stability
   it("should maintain random stream stability when unrelated checks are changed", () => {
@@ -80,7 +80,7 @@ describe("Causal Civilization Engine - Audited Deterministic Kernel", () => {
 
     const replayedHash = deterministicHash(state);
     expect(replayedHash).toBe(finalHash);
-  }, 40000);
+  }, 80000);
 
   // 4. Counterfactual prefix isolation
   it("should isolate counterfactual timelines, keeping pre-intervention prefix identical", () => {

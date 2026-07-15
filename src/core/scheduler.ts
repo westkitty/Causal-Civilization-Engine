@@ -9,7 +9,7 @@ import { updateEconomy } from "../simulation/economy";
 import { updateDemography } from "../simulation/demography";
 import { updateSettlement } from "../simulation/settlement";
 import { updateTransport } from "../simulation/transport";
-import { updatePolitics } from "../simulation/politics";
+import { initializeGovernments, updatePolitics } from "../simulation/politics";
 import { updateBuiltEnvironment } from "../simulation/builtEnvironment";
 
 export function simulateYear(
@@ -19,6 +19,14 @@ export function simulateYear(
   year: number
 ): void {
   state.year = year;
+
+  // Explicit bootstrap: geography already exists from generateWorld. Create
+  // Year-0 settlements before government initialization, then let the stable
+  // annual system order run exactly once.
+  if (year === 0 && Object.keys(state.settlements).length === 0) {
+    updateSettlement(state, ledger, year);
+  }
+  initializeGovernments(state, ledger, year);
 
   // Initialize transient wealth reconciliation diagnostics
   for (const sId of Object.keys(state.settlements)) {
@@ -60,7 +68,9 @@ export function simulateYear(
   updateBuiltEnvironment(state, ledger, year);
 
   // 8. Settlements lifecycle (founding checks, housing expansion, abandonment)
-  updateSettlement(state, ledger, year);
+  if (year !== 0) {
+    updateSettlement(state, ledger, year);
+  }
 
   // Finalize transient wealth reconciliation diagnostics
   for (const sId of Object.keys(state.settlements)) {

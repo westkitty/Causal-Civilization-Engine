@@ -13,6 +13,18 @@ interface Diag {
   canvasHeight: number;
   webglContext: boolean;
   kinds: Record<string, number>;
+  activeOverlay: string;
+  terrainDistinctColors: number;
+}
+
+interface PoliticsSnapshot {
+  year: number;
+  mapCells: number;
+  governments: Record<string, { capitalId: string }>;
+  activeSettlementIds: string[];
+  politicalControl: Record<string, number[]>;
+  stateHash: string;
+  politicalFoundingEventIds: string[];
 }
 
 const serious: RegExp[] = [
@@ -41,6 +53,18 @@ async function waitForBaseline(page: Page) {
 
 async function diag(page: Page): Promise<Diag> {
   return page.evaluate(() => (window as unknown as { __cceDiag: () => Diag }).__cceDiag());
+}
+
+async function politicsAt(
+  page: Page,
+  year: number,
+  branchId: "main" | "suppress_bridge_branch" = "main"
+): Promise<PoliticsSnapshot> {
+  return page.evaluate(({ y, branch }) => (
+    window as unknown as {
+      __cce: { politicsAt: (year: number, branchId: string) => PoliticsSnapshot }
+    }
+  ).__cce.politicsAt(y, branch), { y: year, branch: branchId });
 }
 
 async function setYear(page: Page, year: number) {
@@ -184,6 +208,59 @@ test("counterfactual suppression produces a diverged branch and comparison view"
   await expect(page.getByText("SUPPRESSED", { exact: true })).toBeVisible();
 
   expect(errs.pageErrors, errs.pageErrors.join("\n")).toEqual([]);
+});
+
+test("politics initializes, renders real control data, and survives branch resimulation", async ({ page }) => {
+  const errs = attachErrorCollectors(page);
+  await page.goto("/");
+  await waitForBaseline(page);
+
+  const p0 = await politicsAt(page, 0);
+  const govIds = Object.keys(p0.governments).sort();
+  expect(govIds.length).toBeGreaterThan(0);
+  for (const govId of govIds) {
+    expect(p0.activeSettlementIds).toContain(p0.governments[govId].capitalId);
+    const control = p0.politicalControl[govId];
+    expect(control).toHaveLength(p0.mapCells);
+    expect(control.every(Number.isFinite)).toBe(true);
+  }
+  expect(govIds.some(govId => new Set(p0.politicalControl[govId]).size > 1)).toBe(true);
+  expect(govIds.some(govId => p0.politicalControl[govId].some(value => value > 15))).toBe(true);
+  expect(p0.politicalFoundingEventIds).toEqual(["est_gov_a_0", "est_gov_b_0"]);
+
+  const political = page.getByRole("button", { name: /Political/ });
+  await political.click();
+  await expect(political).toHaveClass(/cyan-400/);
+  await page.waitForTimeout(300);
+  const politicalRender = await diag(page);
+  expect(politicalRender.activeOverlay).toBe("politics");
+  expect(politicalRender.terrainDistinctColors).toBeGreaterThan(1);
+
+  await setYear(page, 50);
+  const p50 = await politicsAt(page, 50);
+  expect(Object.keys(p50.governments).sort()).toEqual(govIds);
+  expect(Object.keys(p50.politicalControl).sort()).toEqual(govIds);
+
+  const baselinePrefix = await politicsAt(page, 9);
+  await setYear(page, 30);
+  const suppress = page.getByRole("button", { name: /Suppress Bridge Construction/ });
+  await expect(suppress).toBeVisible();
+  await suppress.click();
+  await expect(page.locator("text=Recompiling Causal History")).toBeHidden({ timeout: 360_000 });
+  await expect(page.locator("text=suppress_bridge_branch").first()).toBeVisible();
+
+  const branchPrefix = await politicsAt(page, 9, "suppress_bridge_branch");
+  expect(branchPrefix.stateHash).toBe(baselinePrefix.stateHash);
+  expect(branchPrefix.governments).toEqual(baselinePrefix.governments);
+  expect(branchPrefix.politicalControl).toEqual(baselinePrefix.politicalControl);
+  expect(branchPrefix.politicalFoundingEventIds).toEqual(["est_gov_a_0", "est_gov_b_0"]);
+
+  const branchAt10 = await politicsAt(page, 10, "suppress_bridge_branch");
+  expect(Object.keys(branchAt10.governments).sort()).toEqual(govIds);
+  expect(Object.keys(branchAt10.politicalControl).sort()).toEqual(govIds);
+
+  expect(errs.pageErrors, errs.pageErrors.join("\n")).toEqual([]);
+  expect(errs.consoleErrors, errs.consoleErrors.join("\n")).toEqual([]);
 });
 
 test("captures real-browser performance measurements", async ({ page }) => {

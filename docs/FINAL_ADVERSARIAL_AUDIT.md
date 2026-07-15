@@ -210,7 +210,7 @@ Critical: C1–C4. High: H1–H6. Medium: M1–M7. Low: L1–L3.
 
 ---
 
-**M8 — Politics subsystem never activates: governments are never created, so control fields, taxation, and capital succession are dead (discovered during implementation).**
+**M8 — Historical finding: politics did not activate; governments were never created, so control fields, taxation, and capital succession were dead (discovered during implementation).**
 - Subsystem: politics / scheduler.
 - File/function: `src/core/scheduler.ts` (system order) + `src/simulation/politics.ts` (`year === 0 && … sIds.length >= 2` government-creation guard) + `src/simulation/settlement.ts`.
 - Evidence: `updatePolitics` runs at step 6 but `updateSettlement` (which creates the initial settlements) runs at step 8, so at `year === 0` there are **zero** settlements when politics runs; the creation guard fails and governments are never created on any later year. Probe over 80 years: `governments = {}`, `politicalControl = {}`, zero taxation events.
@@ -220,6 +220,10 @@ Critical: C1–C4. High: H1–H6. Medium: M1–M7. Low: L1–L3.
 - Assessment / decision: **NOT fixed by design.** The task constraints explicitly forbid adding or altering political-simulation systems, and enabling this subsystem would change simulation rules and every downstream hash broadly (control-field Dijkstra per government per year on a 125×125 grid also has performance implications). It is **not** part of the core definition of done (causal/economic/transport/worker/UI). Recorded honestly rather than silently "fixed".
 - Status: **DEFERRED (documented; out of scope per constraints).** The H4 tax-booking fix remains as defensive correctness so that activating politics later would not break reconciliation.
 - Residual risk: the politics overlay and any politics-dependent narration are non-functional; documented in README/walkthrough.
+- 2026-07-15 amendment: this historical disposition was superseded by the bounded
+  politics completion pass starting at `94acf387f57918fc44c22bf5e62608c22cc578c5`.
+  The original finding is retained here; current correction and evidence are recorded
+  in the appended resweep amendment below.
 
 ### LOW
 
@@ -276,6 +280,7 @@ adding Playwright.
 | Branch-aware, field-specific, symmetric causal ancestry | UNIT-TEST VERIFIED |
 | Worker progress + stale-response rejection | UNIT-TEST VERIFIED + REAL-BROWSER VERIFIED |
 | WebGL init / terrain / bridge / suppression / interactions | REAL-BROWSER VERIFIED |
+| Existing politics bootstrap / control / tax / succession | UNIT-TEST VERIFIED + REAL-BROWSER VERIFIED |
 | GPU perf metrics (draw calls, FPS, heap) | REAL-BROWSER MEASURED (single run) |
 | Memory-leak freedom | UNVERIFIED (bounded repeat check only) |
 | CI non-interactive checks | CI VERIFIED / PENDING (see final report) |
@@ -292,16 +297,17 @@ Captured by the Playwright `captures real-browser performance measurements` test
   (`--use-gl=angle --use-angle=swiftshader`), i.e. **no GPU acceleration**.
 - OS: macOS (Darwin, Apple Silicon). Viewport / canvas: 1280×720.
 - Shell render (title visible): ~0.9 s.
-- Canvas visible / baseline 400-year simulation complete: ~75 s (Worker thread).
-- FPS over a ~2 s interval: **~11 FPS**; average frame ~89 ms; worst frame ~149 ms.
+- Canvas visible / politics-active baseline 400-year simulation complete: ~107 s (Worker thread).
+- FPS over a ~2 s interval: **~9 FPS**; average frame ~112 ms; worst frame ~168 ms.
 - `renderer.info`: **141 draw calls, 32,432 triangles**, 0 lines, 0 points.
-- JS heap: ~803 MB (400 cached per-year world states, each a 125×125 grid × 9 arrays).
+- JS heap: ~905 MB (400 cached per-year world states, including two active political-control fields).
 - Bounded repeat check: 30 timeline scrubs → **0 MB** heap growth (not a leak proof).
 - Bundle: `index-*.js` ~819 kB (gzip ~220 kB), worker ~42 kB, css ~5 kB.
 
 These are software-rendering numbers; a real GPU will differ substantially. **60 FPS
-is explicitly not claimed** (the low FPS is a SwiftShader artifact, and the ~75 s
-baseline reflects per-year full-state hashing, not a regression from these repairs).
+is explicitly not claimed** (the low FPS is a SwiftShader artifact). The larger
+politics-active cached state and yearly control propagation are included in the ~107 s
+baseline; the deferred timeline-storage/Worker-payload redesign remains separate.
 
 ---
 
@@ -335,24 +341,72 @@ The corrected repository was re-attacked along the required axes. Results:
 
 ### New defects discovered during the resweep
 
-- **M8 (Medium, deferred)** — the politics subsystem is inert (governments are never
-  created because `updatePolitics` runs before `updateSettlement` at year 0). Recorded
-  above; deliberately not fixed (out-of-scope political-simulation change with broad
-  behavioral impact). The H4 tax-reconciliation booking is kept as defensive
-  correctness and is directly unit-tested against a pre-created government.
+- **M8 (Medium, historical disposition; superseded 2026-07-15)** — the politics
+  subsystem was inert because `updatePolitics` ran before `updateSettlement` at Year 0.
+  It was deliberately deferred during the original audit; the bounded completion pass
+  and current evidence are recorded in the amendment below.
 - **Browser-only test-selector issues** found and fixed while executing the suite
   (ambiguous `text=SUPPRESSED`, initial-load timeouts under CPU contention). These
   were test defects, not application defects; corrected in commit `045d7a8`.
 
 No new Critical or High application defects survived the resweep.
 
+### 2026-07-15 politics completion amendment
+
+- **Ground truth**: branch `main`, expected starting SHA
+  `94acf387f57918fc44c22bf5e62608c22cc578c5`, expected GitHub origin, clean tree.
+  Baseline lint passed with no findings; 46/46 Vitest tests passed; build passed with
+  the existing >500 kB Three.js chunk warning.
+- **Confirmed M8 chain**: `updatePolitics` ran before Year-0 `updateSettlement`; the
+  politics initializer required two active settlements and was guarded by `year === 0`.
+  A fresh focused probe failed with `governments.length === 0`, matching the earlier
+  80-year evidence. No alternate government creator exists.
+- **Bootstrap correction**: scheduler-owned explicit bootstrap now creates initial
+  settlements before `initializeGovernments`, which remains eligible to retry while no
+  government exists and creates governments only once two active settlements exist.
+  Ordinary annual politics still runs exactly once. Zero- and one-settlement fixtures remain government-free;
+  repeated bootstrap calls do not duplicate founding events.
+- **Government/control proof**: the standard seed creates `gov_a` and `gov_b`; each
+  capital resolves to an active settlement. Every field has 15,625 finite entries and
+  more than one distinct value. Identical politics-active runs match exact state,
+  ledger, and per-year hashes.
+- **Tax proof**: controlled fixtures produce a taxation event and linked settlement
+  wealth events. Total settlement reduction equals treasury increase exactly. Wealth
+  105 clamps to 100; wealth already below 100 remains unchanged. Equal control is
+  resolved once by deterministic government ID, preventing double taxation.
+- **Succession proof**: relocation now runs before control-grid reset and consults the
+  previous valid field. An invalid capital moves exactly once to the largest eligible
+  active controlled settlement with the recorded before/after IDs. With no eligible
+  replacement, no relocation or fabricated capital occurs.
+- **Branch/snapshot proof**: insertion at Year 0 no longer pre-simulates Year 0 and
+  then repeats it. Post-bootstrap branch states retain governments/control arrays;
+  every pre-intervention year hash matches and political-founding events remain unique.
+- **Focused Chromium proof**: the real application and ES-module Worker completed the
+  baseline and bridge branch in 4.1 minutes. The DEV seam observed real government,
+  capital, and control arrays; Political rendering had multiple terrain colors; data
+  survived scrubbing; branch Year 9 matched baseline state hash, governments, and full
+  control arrays; no console errors or page errors occurred. The existing benign
+  `PCFSoftShadowMap` deprecation warning remained.
+- **Hostile resweep**: exercised zero/one settlements, repeated bootstrap, finite field
+  dimensions, tax floor and overlap, missing/abandoned capitals, no-replacement
+  succession, Year-0 and post-init branches, duplicate event IDs, snapshot replay, and
+  deterministic hashes. One High defect was found and fixed: taxation previously raised
+  wealth below 100 and could book a negative tax.
+- **Performance boundary**: political propagation now indexes existing road adjacency
+  and active bridge cells once per yearly update, preserving formulas. The deferred
+  timeline-storage, cached-state, Worker-payload, bundle-splitting, and broader memory/
+  performance architecture was not undertaken.
+
 ---
 
 ## Final validation snapshot
 
 - Lint (`npm run lint`): **0 errors, 0 warnings**.
-- Unit/JSDOM (`npm test`): **46 passed** (kernel 19, repairs 26, ui 1); ~85 s wall.
+- Unit/JSDOM (`npm test`): **56 passed** (kernel 19, repairs 36, ui 1) in 127.58 s;
+  politics-active long-run tests use measured 80 s budgets rather than reducing years.
 - Build (`npm run build`): success; `index-*.js` ~819 kB (gzip ~220 kB), chunk-size
   >500 kB warning (Three.js; deferred — M7).
-- E2E (`npm run test:e2e`): **4 passed** in headless Chromium; ~8 min wall.
+- Focused politics E2E: **1 passed** in 4.1 min with the real Worker and Chromium.
+- E2E (`npm run test:e2e`): **5 passed** in headless Chromium in 15.3 min; no page
+  errors or console errors. Known warning: `PCFSoftShadowMap` deprecation.
 - CI (`.github/workflows/ci.yml`): result reported in the session's final report.

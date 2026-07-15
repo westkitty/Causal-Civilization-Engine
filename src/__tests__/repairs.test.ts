@@ -19,7 +19,7 @@ import {
   aggregateTradeMechanism,
 } from "../core/causality";
 import { acceptResult } from "../core/requestGuard";
-import { updatePolitics } from "../simulation/politics";
+import { initializeGovernments, updatePolitics } from "../simulation/politics";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -455,6 +455,207 @@ describe("Full-year wealth reconciliation (H4)", () => {
     expect(rec.taxesPaid).toBeGreaterThan(0);      // tax actually fired
     expect(rec.taxesPaid).toBe(before - s.wealth); // booked the actual delta
     expect(reconciles(rec)).toBe(true);            // full-year identity holds
+  });
+});
+
+describe("Politics activation and lifecycle", () => {
+  it("creates governments with valid capitals and nonuniform finite control fields", () => {
+    const branch = new Branch("main");
+    const ledger = new CausalLedger("main");
+    const state = runFullSimulation("bridge-emergence-001", branch, ledger, 0);
+
+    const govIds = Object.keys(state.governments).sort();
+    expect(govIds).toEqual(["gov_a", "gov_b"]);
+    expect(ledger.getAllEvents().filter(e => e.eventType === "political_founding")).toHaveLength(2);
+
+    for (const govId of govIds) {
+      const capital = state.settlements[state.governments[govId].capitalId];
+      expect(capital).toBeDefined();
+      expect(capital.abandoned).toBe(false);
+
+      const control = state.politicalControl[govId];
+      expect(control).toHaveLength(state.mapWidth * state.mapHeight);
+      expect(control.every(Number.isFinite)).toBe(true);
+      expect(new Set(control).size).toBeGreaterThan(1);
+    }
+  });
+
+  it("does not duplicate government initialization in subsequent years", () => {
+    const branch = new Branch("main");
+    const ledger = new CausalLedger("main");
+    runFullSimulation("bridge-emergence-001", branch, ledger, 10);
+
+    const founding = ledger.getAllEvents().filter(e => e.eventType === "political_founding");
+    expect(founding.map(e => e.eventId).sort()).toEqual(["est_gov_a_0", "est_gov_b_0"]);
+    expect(ledger.getAllEvents().some(e => e.eventType === "taxation")).toBe(true);
+  });
+
+  it("waits for two eligible settlements and remains inert on repeated bootstrap calls", () => {
+    const state = baseGrid(5, 5);
+    const ledger = new CausalLedger("main");
+
+    initializeGovernments(state, ledger, 0);
+    expect(Object.keys(state.governments)).toEqual([]);
+
+    state.settlements.s_one = mkSettlement("s_one", 6, 200, 1000);
+    initializeGovernments(state, ledger, 0);
+    expect(Object.keys(state.governments)).toEqual([]);
+
+    state.settlements.s_two = mkSettlement("s_two", 18, 200, 1000);
+    initializeGovernments(state, ledger, 1);
+    initializeGovernments(state, ledger, 1);
+    expect(Object.keys(state.governments).sort()).toEqual(["gov_a", "gov_b"]);
+    expect(ledger.getAllEvents().filter(e => e.eventType === "political_founding")).toHaveLength(2);
+  });
+
+  it("produces identical state and ledger hashes across identical politics-active runs", () => {
+    const b1 = new Branch("main");
+    const l1 = new CausalLedger("main");
+    const s1 = runFullSimulation("politics-determinism", b1, l1, 10);
+    const b2 = new Branch("main");
+    const l2 = new CausalLedger("main");
+    const s2 = runFullSimulation("politics-determinism", b2, l2, 10);
+
+    expect(deterministicHash(s1)).toBe(deterministicHash(s2));
+    expect(deterministicHash(l1.events)).toBe(deterministicHash(l2.events));
+    expect(b1.yearHashes).toEqual(b2.yearHashes);
+  });
+
+  it("reconciles taxation exactly, links wealth events, and respects the wealth floor", () => {
+    const state = baseGrid(5, 5);
+    state.settlements = {
+      s_cap: mkSettlement("s_cap", 12, 300, 1000),
+      s_floor: mkSettlement("s_floor", 13, 200, 105),
+      s_below: mkSettlement("s_below", 17, 200, 90),
+    };
+    state.governments = {
+      gov_a: { id: "gov_a", name: "Gov", capitalId: "s_cap", treasury: 250, legitimacy: 0.8, taxRate: 0.1 },
+    };
+    const ledger = new CausalLedger("main");
+    const beforeWealth = Object.fromEntries(Object.entries(state.settlements).map(([id, s]) => [id, s.wealth]));
+    const treasuryBefore = state.governments.gov_a.treasury;
+
+    updatePolitics(state, ledger, 5);
+
+    const taxEvent = ledger.getAllEvents().find(e => e.eventType === "taxation");
+    expect(taxEvent).toBeDefined();
+    const wealthEvents = ledger.getAllEvents().filter(e => e.ruleId === "tax_wealth_reduction");
+    expect(wealthEvents).toHaveLength(2);
+    expect(wealthEvents.every(e => e.parentEventIds[0] === taxEvent!.eventId)).toBe(true);
+
+    const totalReduction = Object.entries(state.settlements)
+      .reduce((sum, [id, s]) => sum + beforeWealth[id] - s.wealth, 0);
+    const treasuryIncrease = state.governments.gov_a.treasury - treasuryBefore;
+    expect(totalReduction).toBe(105);
+    expect(treasuryIncrease).toBe(totalReduction);
+    expect(state.settlements.s_floor.wealth).toBe(100);
+    expect(state.settlements.s_below.wealth).toBe(90);
+    expect(taxEvent!.immediateEffects[0]).toMatchObject({ before: 250, after: 355 });
+  });
+
+  it("taxes an equally controlled settlement only once using a deterministic government tie-break", () => {
+    const state = baseGrid(5, 5);
+    state.settlements = { s_cap: mkSettlement("s_cap", 12, 300, 1000) };
+    state.governments = {
+      gov_a: { id: "gov_a", name: "A", capitalId: "s_cap", treasury: 0, legitimacy: 0.8, taxRate: 0.1 },
+      gov_b: { id: "gov_b", name: "B", capitalId: "s_cap", treasury: 0, legitimacy: 0.8, taxRate: 0.2 },
+    };
+
+    updatePolitics(state, new CausalLedger("main"), 5);
+
+    expect(state.settlements.s_cap.wealth).toBe(900);
+    expect(state.governments.gov_a.treasury).toBe(100);
+    expect(state.governments.gov_b.treasury).toBe(0);
+  });
+
+  it("relocates an invalid capital once using the previous control field", () => {
+    const state = baseGrid(5, 5);
+    state.settlements = {
+      s_old: { ...mkSettlement("s_old", 12, 0, 100), abandoned: true },
+      s_small: mkSettlement("s_small", 13, 100, 500),
+      s_large: mkSettlement("s_large", 14, 300, 500),
+    };
+    state.governments = {
+      gov_a: { id: "gov_a", name: "Gov", capitalId: "s_old", treasury: 0, legitimacy: 0.8, taxRate: 0.1 },
+    };
+    state.politicalControl.gov_a = new Array(25).fill(0);
+    state.politicalControl.gov_a[13] = 40;
+    state.politicalControl.gov_a[14] = 40;
+    const ledger = new CausalLedger("main");
+
+    updatePolitics(state, ledger, 1);
+    updatePolitics(state, ledger, 2);
+
+    expect(state.governments.gov_a.capitalId).toBe("s_large");
+    const relocations = ledger.getAllEvents().filter(e => e.eventType === "capital_relocation");
+    expect(relocations).toHaveLength(1);
+    expect(relocations[0].immediateEffects[0]).toMatchObject({ before: "s_old", after: "s_large" });
+    expect(state.settlements[state.governments.gov_a.capitalId].abandoned).toBe(false);
+  });
+
+  it("does not invent a capital when no controlled replacement exists", () => {
+    const state = baseGrid(5, 5);
+    state.settlements = { s_outside: mkSettlement("s_outside", 12, 300, 1000) };
+    state.governments = {
+      gov_a: { id: "gov_a", name: "Gov", capitalId: "s_missing", treasury: 0, legitimacy: 0.8, taxRate: 0.1 },
+    };
+    state.politicalControl.gov_a = new Array(25).fill(0);
+    const ledger = new CausalLedger("main");
+
+    updatePolitics(state, ledger, 1);
+
+    expect(state.governments.gov_a.capitalId).toBe("s_missing");
+    expect(ledger.getAllEvents().filter(e => e.eventType === "capital_relocation")).toHaveLength(0);
+    expect(state.politicalControl.gov_a).toHaveLength(25);
+  });
+
+  it("preserves politics and exact prefix hashes in a post-bootstrap counterfactual", () => {
+    const parentBranch = new Branch("main");
+    const parentLedger = new CausalLedger("main");
+    runFullSimulation("bridge-emergence-001", parentBranch, parentLedger, 30);
+    const prefixBranch = new Branch("main");
+    const prefixLedger = new CausalLedger("main");
+    const parentAt9 = runFullSimulation("bridge-emergence-001", prefixBranch, prefixLedger, 9);
+    const intervention: TimelineIntervention = {
+      interventionId: "politics_branch_10", parentBranchId: "main",
+      newBranchId: "politics_branch", insertionYear: 10,
+      targetIds: ["bridge_6428"], operation: "suppress_event", parameters: {},
+    };
+
+    const result = resimulateBranch(parentBranch, parentLedger, intervention, 30);
+
+    for (let year = 0; year < intervention.insertionYear; year++) {
+      expect(result.branch.yearHashes[year]).toBe(parentBranch.yearHashes[year]);
+    }
+    const stripBranchId = ({ branchId: _branchId, ...event }: HistoricalEvent) => event;
+    const parentPrefixEvents = parentLedger.getAllEvents()
+      .filter(event => event.time.year < intervention.insertionYear)
+      .map(stripBranchId);
+    const branchPrefixEvents = result.ledger.getAllEvents()
+      .filter(event => event.time.year < intervention.insertionYear)
+      .map(stripBranchId);
+    expect(branchPrefixEvents).toEqual(parentPrefixEvents);
+    expect(result.cachedStates[9].governments).toEqual(parentAt9.governments);
+    expect(result.cachedStates[9].politicalControl).toEqual(parentAt9.politicalControl);
+    expect(Object.keys(result.cachedStates[30].governments).length).toBeGreaterThan(0);
+    expect(Object.keys(result.cachedStates[30].politicalControl).length).toBeGreaterThan(0);
+    expect(result.ledger.getAllEvents().filter(e => e.eventType === "political_founding")).toHaveLength(2);
+  }, 40000);
+
+  it("creates a Year-0 branch without simulating bootstrap twice", () => {
+    const parentBranch = new Branch("main");
+    const parentLedger = new CausalLedger("main");
+    runFullSimulation("bridge-emergence-001", parentBranch, parentLedger, 0);
+    const intervention: TimelineIntervention = {
+      interventionId: "politics_branch_0", parentBranchId: "main",
+      newBranchId: "politics_branch_0", insertionYear: 0,
+      targetIds: [], operation: "alter_condition", parameters: {},
+    };
+
+    const result = resimulateBranch(parentBranch, parentLedger, intervention, 1);
+
+    expect(Object.keys(result.cachedStates[0].governments).sort()).toEqual(["gov_a", "gov_b"]);
+    expect(result.ledger.getAllEvents().filter(e => e.eventType === "political_founding")).toHaveLength(2);
   });
 });
 

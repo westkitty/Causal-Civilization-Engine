@@ -1,6 +1,6 @@
 # Walkthrough & Verification Summary - Causal Civilization Engine
 
-This document provides a final summary of changes made to the Causal Civilization Engine, verifying ledger integrity, causal signature proofs, transport constraints, and causal-semantics correctness.
+This document provides a final summary of changes made to the Causal Civilization Engine, verifying ledger integrity, causal signature proofs, transport constraints, causal-semantics correctness, and the repaired existing politics subsystem.
 
 ## Changes Made
 
@@ -39,14 +39,23 @@ This document provides a final summary of changes made to the Causal Civilizatio
    - Semantic infrastructure-parent lookup via `findEligibleInfrastructureEvent` matches by exact event type, affected entity ID, and year bounds — eliminates prefix-based ID matching.
    - Removed seed-based suppression (`state.seed === "suppressed"` check removed from `transport.ts`).
 
+7. **Politics Subsystem Completion**:
+   - Confirmed the initialization chain: Year-0 politics ran before settlement bootstrap, then a Year-0-only guard prevented every later retry.
+   - `simulateYear` now performs explicit Year-0 settlement bootstrap, calls the existing two-government initializer once its prerequisites exist, and then runs ordinary annual systems once in their stable order.
+   - Government founding remains deterministic and guarded against duplicate calls. Capitals resolve to active settlements and each control field contains exactly `mapWidth * mapHeight` finite entries with real spatial variance.
+   - Capital succession now consults the previous valid control field before that field is reset; an abandoned or missing capital relocates once to the largest eligible controlled settlement, while no eligible replacement causes no fabricated capital.
+   - Tax fixtures prove settlement wealth reductions equal treasury increases exactly. The existing 100-wealth floor is honored without increasing settlements already below it, and each settlement pays only one deterministically selected strongest government.
+   - Branch replay at Year 0 no longer simulates bootstrap twice. Post-bootstrap branches retain government/control data, exactly match every pre-intervention hash, and do not duplicate political-founding events.
+   - Political propagation indexes road adjacency and active bridge cells once per year. This preserves the existing formula while avoiding repeated route scans; timeline storage and Worker payload architecture were not changed.
+
 ## Verification Evidence
 
 ### Automated Test Output
-All 46 unit/JSDOM tests (kernel + repairs + 1 UI mount) pass cleanly, plus 4 real-browser Playwright tests:
+All 56 unit/JSDOM tests (kernel + repairs + 1 UI mount) pass cleanly, plus 5 real-browser Playwright tests:
 ```bash
  Test Files  3 passed (3)
-      Tests  46 passed (46)     # vitest
-   4 passed                     # playwright (headless Chromium)
+      Tests  56 passed (56)     # vitest
+   5 passed                     # playwright (headless Chromium)
 ```
 Lint reports 0 errors and 0 warnings.
 
@@ -71,8 +80,9 @@ Original Transport Expense: 0.8400 | Counterfactual Transport Expense: 2.5200
 ```
 
 ### Verification status (updated by the final adversarial audit)
-- **Playwright E2E Tests**: NOW EXECUTED. `@playwright/test` + Chromium are installed; `npm run test:e2e` runs 4 real-browser tests (WebGL init, rendered content, all core interactions, and the full counterfactual-suppression flow via the real Worker). All pass in headless Chromium.
-- **Browser performance**: MEASURED under software WebGL (SwiftShader): ~11 FPS, ~89/149 ms avg/worst frame, 141 draw calls, 32,432 triangles, ~803 MB heap, ~75 s baseline sim. These are software-rendering figures (no GPU); 60 FPS is not claimed.
+- **Playwright E2E Tests**: EXECUTED. `@playwright/test` + Chromium are installed; `npm run test:e2e` runs 5 real-browser tests, including focused politics state/render/branch verification through the real Worker.
+- **Browser performance**: MEASURED with politics active under software WebGL (SwiftShader): ~9 FPS, ~112/168 ms avg/worst frame, 141 draw calls, 32,432 triangles, ~905 MB heap, ~107 s baseline sim. These are software-rendering figures (no GPU); 60 FPS is not claimed.
 - **SpiderMonkey & Cross-engine Hashing**: still unverified (out of scope) — determinism is claimed only for the tested local JavaScript runtime.
 - **Leak Profiling**: a bounded 30-scrub check showed 0 MB heap growth; long-run leak freedom remains unverified.
-- **Politics subsystem**: found inert (governments never created; audit finding M8) and deliberately left unchanged as out of scope.
+- **Politics subsystem**: ACTIVATED AND VERIFIED for the existing government bootstrap, political-control propagation, taxation, capital succession, deterministic replay, counterfactual prefix, and Political overlay paths. No new political mechanics were added.
+- **Remaining architecture limits**: the large cached-state/timeline-storage and Worker-payload redesign remains deferred, as do broader performance work and new political mechanics.

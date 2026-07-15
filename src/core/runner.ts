@@ -76,9 +76,9 @@ export function resimulateBranch(
     }
   } else {
     state = generateWorld(parentBranch.snapshots[0]?.state.seed || "default", 125, 125);
-    simulateYear(state, ledger, branch, 0);
-    cachedStates[0] = cloneState(state);
-    startYear = 1;
+    // With no earlier snapshot, the prefix loop owns Year 0. This also lets an
+    // insertion at Year 0 occur before bootstrap without simulating Year 0 twice.
+    startYear = 0;
   }
 
   // Simulate the (still identical) prefix up to the intervention year, caching
