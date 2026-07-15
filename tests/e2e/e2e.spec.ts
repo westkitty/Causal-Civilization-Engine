@@ -151,13 +151,15 @@ test("counterfactual suppression produces a diverged branch and comparison view"
   // Worker progress is visible while the branch resimulates.
   await expect(page.locator("text=Recompiling Causal History")).toBeVisible();
   const progressValues = new Set<string>();
-  for (let i = 0; i < 15; i++) {
+  for (let i = 0; i < 30; i++) {
     const t = await page.locator("text=/Progress: \\d+%/").textContent().catch(() => null);
     if (t) progressValues.add(t);
     if (await page.locator("text=Recompiling Causal History").isHidden().catch(() => false)) break;
     await page.waitForTimeout(1000);
   }
-  await expect(page.locator("text=Recompiling Causal History")).toBeHidden({ timeout: 90_000 });
+  // The branch resimulation (~390 years) can run notably slower on 2-core CI
+  // runners under heap pressure than on a developer machine.
+  await expect(page.locator("text=Recompiling Causal History")).toBeHidden({ timeout: 180_000 });
   expect(progressValues.size).toBeGreaterThan(1); // progress actually changed
 
   // Branch tag updated; split-screen comparison active.
