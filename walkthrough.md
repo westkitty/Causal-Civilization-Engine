@@ -29,7 +29,7 @@ This document provides a final summary of changes made to the Causal Civilizatio
    - Wrote tests verifying: range limits (fails beyond 25 cells), river costs with/without bridges, bridge removal path and travel time adjustments, alternate routing when the cheapest route is bottlenecked at zero capacity, and multi-transaction rerouting when the first trade fills the shortest route.
 
 5. **Phase 5 — Transaction Reconciliation**:
-   - Implemented double-entry accounting conservation tests verifying: `buyer_expenditure = seller_revenue + transport_drag`.
+   - Implemented transaction reconciliation conservation tests verifying: `buyer_expenditure = seller_revenue + transport_drag`. (Transport drag is an expense sink, not a balanced counter-account, so this is transaction reconciliation, not double-entry accounting.)
    - Asserted matching parent links, no duplicate/overwritten events, and capacity limit compliance.
 
 6. **Phase 6 — Causal Integrity Validation**:
@@ -42,14 +42,16 @@ This document provides a final summary of changes made to the Causal Civilizatio
 ## Verification Evidence
 
 ### Automated Test Output
-All 20 tests (19 Kernel, 1 UI mount) pass cleanly in the test suite:
+All 46 unit/JSDOM tests (kernel + repairs + 1 UI mount) pass cleanly, plus 4 real-browser Playwright tests:
 ```bash
- Test Files  2 passed (2)
-      Tests  20 passed (20)
+ Test Files  3 passed (3)
+      Tests  46 passed (46)     # vitest
+   4 passed                     # playwright (headless Chromium)
 ```
+Lint reports 0 errors and 0 warnings.
 
 ### 5-Stage Causal Diagnostic Output
-The test run output prints the following verified causal signature with quantitative divergence data:
+The test run output prints the following verified causal signature with quantitative divergence data. Trade/path/wealth event IDs now carry a pair-scoped ordinal suffix (`_0`) instead of a global trade counter, and correlate across branches by an explicit `correlationKey` (e.g. `trade:24:settlement_5045:settlement_7545:timber:0`):
 ```
 === CAUSAL DIAGNOSTIC TRACE ===
 Focal Wealth Event Normalized Delta: 0.8000
@@ -58,18 +60,19 @@ Original Unit Price: 4.1000 | Counterfactual Unit Price: 8.3000
 Original Transport Expense: 0.8400 | Counterfactual Transport Expense: 2.5200
 [Stage 1] Event ID: interv_suppress_bridge_10 | Year: 10 | Type: timeline_intervention
 [Stage 2] Event ID: build_road_route_settlement_5045_to_settlement_7545_10 | Year: 10 | Type: road_construction
-   Proves previous ID is included: true
-[Stage 3] Event ID: path_resolve_settlement_5045_to_settlement_7545_timber_24 | Year: 24 | Type: transport_path_resolved
-   Proves previous ID is included: true
-[Stage 4] Event ID: trade_alloc_settlement_5045_to_settlement_7545_timber_24 | Year: 24 | Type: trade_allocation
-   Proves previous ID is included: true
-[Stage 5] Event ID: wealth_change_settlement_5045_export_to_settlement_7545_timber_24 | Year: 24 | Type: settlement_wealth_changed
-   Proves previous ID is included: true
+   Proves previous ID (interv_suppress_bridge_10) is included: true
+[Stage 3] Event ID: path_resolve_settlement_5045_to_settlement_7545_timber_24_0 | Year: 24 | Type: transport_path_resolved
+   Proves previous ID (build_road_route_settlement_5045_to_settlement_7545_10) is included: true
+[Stage 4] Event ID: trade_alloc_settlement_5045_to_settlement_7545_timber_24_0 | Year: 24 | Type: trade_allocation
+   Proves previous ID (path_resolve_settlement_5045_to_settlement_7545_timber_24_0) is included: true
+[Stage 5] Event ID: wealth_change_settlement_5045_export_to_settlement_7545_timber_24_0 | Year: 24 | Type: settlement_wealth_changed
+   Proves previous ID (trade_alloc_settlement_5045_to_settlement_7545_timber_24_0) is included: true
 ===============================
 ```
 
-### Unverified Results
-- **Playwright E2E Tests**: Playwright browser testing is unverified on the sandbox host because the required Playwright browsers are not installed. The E2E script has been prepared at `tests/e2e/e2e.spec.ts` for local developer execution.
-- **SpiderMonkey & Cross-Platform Hashing**: Cross-engine execution (SpiderMonkey, V8, JavaScriptCore) remains unverified.
-- **Draw Call & Triangle Counts**: Headless WebGL metrics cannot be independently verified in the terminal sandbox environment due to a lack of GPU access.
-- **Leak Profiling**: Long-term memory leaks remain unverified.
+### Verification status (updated by the final adversarial audit)
+- **Playwright E2E Tests**: NOW EXECUTED. `@playwright/test` + Chromium are installed; `npm run test:e2e` runs 4 real-browser tests (WebGL init, rendered content, all core interactions, and the full counterfactual-suppression flow via the real Worker). All pass in headless Chromium.
+- **Browser performance**: MEASURED under software WebGL (SwiftShader): ~11 FPS, ~89/149 ms avg/worst frame, 141 draw calls, 32,432 triangles, ~803 MB heap, ~75 s baseline sim. These are software-rendering figures (no GPU); 60 FPS is not claimed.
+- **SpiderMonkey & Cross-engine Hashing**: still unverified (out of scope) — determinism is claimed only for the tested local JavaScript runtime.
+- **Leak Profiling**: a bounded 30-scrub check showed 0 MB heap growth; long-run leak freedom remains unverified.
+- **Politics subsystem**: found inert (governments never created; audit finding M8) and deliberately left unchanged as out of scope.

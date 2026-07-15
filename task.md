@@ -18,15 +18,16 @@
   - `[x]` Record suppression parent event IDs in `src/simulation/transport.ts`
   - `[x]` Implement `traceCausalAncestry` in `src/core/causality.ts`
   - `[x]` Add negative test asserting unresolved status for unconnected differences
-- `[ ]` **Phase 6: Real-Browser Verification**
+- `[x]` **Phase 6: Real-Browser Verification** (REAL-BROWSER VERIFIED — headless Chromium)
   - `[x]` Create Playwright acceptance test in `tests/e2e/e2e.spec.ts`
-  - `[ ]` Run real-browser E2E suite (code prepared, execution unverified)
-- `[x]` **Phase 7 & 8: Move Simulation to Web Worker**
-  - `[x]` Measure main-thread blocking of simulation
-  - `[x]` Implement ES-module Web Worker in `src/core/simulation.worker.ts`
-  - `[x]` Integrate Worker thread with React `App.tsx` and fallback to synchronous mode in Node/JSDOM
-- `[ ]` **Phase 9: Performance Instrumentation**
-  - `[ ]` Record bundles, render times, frames, draw calls, triangles, and heap metrics (unverified against live rendering)
+  - `[x]` Install `@playwright/test` + Chromium; add `playwright.config.ts` with auto Vite server and `test:e2e` script
+  - `[x]` Run real-browser E2E suite (4 tests pass): WebGL init, terrain/rivers/settlements/roads/bridge render, camera, resize, overlays, play/pause, timeline scrub, Inspector, console/page errors
+  - `[x]` Counterfactual suppression verified end-to-end via the real Worker (branch, progress, split-screen, comparison divider, suppressed-bridge Inspector)
+- `[x]` **Phase 7 & 8: Web Worker** (worker branch path repaired — was broken by a double-simulation duplicate-event bug)
+  - `[x]` ES-module Web Worker in `src/core/simulation.worker.ts` (no longer re-simulates the branch)
+  - `[x]` Worker lifecycle hardened in `App.tsx`: request-id guard, prior-worker termination, unmount cleanup, error surface
+- `[x]` **Phase 9: Performance Instrumentation** (REAL-BROWSER MEASURED — software WebGL / SwiftShader)
+  - `[x]` Recorded FPS (~11), avg/worst frame time (~89/~149 ms), draw calls (141), triangles (32,432), heap (~803 MB), baseline sim time (~75 s), bundle sizes. Software-rendering figures; 60 FPS not claimed. GPU/leak profiling remains unverified.
 - `[x]` **Phase 10 & 11: Clean Repository and Correct Documentation**
   - `[x]` Move diagnostics out of `src/` to `scripts/`
   - `[x]` Create and polish `task.md` and `walkthrough.md` in the project root
@@ -43,6 +44,22 @@
   - `[x]` Add exhaustive assertions verifying 5-stage chronological signature causal chain
   - `[x]` Verify transaction reconciliation: buyer/seller wealth conservation with transport drag
   - `[x]` Remove seed-based suppression (no `state.seed === "suppressed"` magic)
+- `[x]` **Phase 13: Final Adversarial Audit repairs** (see `docs/FINAL_ADVERSARIAL_AUDIT.md`)
+  - `[x]` C1: Web Worker branch path no longer double-simulates (fixed duplicate-event crash in the real browser)
+  - `[x]` C2: off-network annual transport capacity is bounded, consumed, direction-independent, and resets per year (`capacityKeys`)
+  - `[x]` C3: semantic branch-stable event correlation (`correlationKey`, pair-scoped ordinal) replaces the global `tradeCounter`
+  - `[x]` C4: worker stale-response rejection, prior-worker termination, and unmount cleanup
+  - `[x]` H1: symmetric, order-independent causal event comparison (sets, conditions, observations, all effects, year)
+  - `[x]` H2: MapViewer no longer re-initializes the renderer on swipe/branch changes
+  - `[x]` H4: taxation booked into per-settlement reconciliation (defensive; see M8)
+  - `[x]` H5/H6: GitHub Actions CI + runnable Playwright suite
+  - `[x]` M1: exhaustive-deps lint warning removed (0 errors, 0 warnings)
+  - `[x]` Added 26 adversarial unit tests + 4 real-browser tests
+  - `[deferred]` M7: bundle code-splitting (out of scope); M8: inert politics subsystem (documented, out of scope)
+
+## Legend
+
+`[x]` implemented and verified at the stated level · `[deferred]` recorded, not done (rationale in the audit).
 
 ## Repository completion rule
 
