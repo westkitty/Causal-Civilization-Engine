@@ -157,9 +157,10 @@ test("counterfactual suppression produces a diverged branch and comparison view"
     if (await page.locator("text=Recompiling Causal History").isHidden().catch(() => false)) break;
     await page.waitForTimeout(1000);
   }
-  // The branch resimulation (~390 years) can run notably slower on 2-core CI
-  // runners under heap pressure than on a developer machine.
-  await expect(page.locator("text=Recompiling Causal History")).toBeHidden({ timeout: 180_000 });
+  // The branch resimulation (~390 years) runs far slower on 2-core CI runners:
+  // the main thread holds the ~800 MB baseline cache while the Worker builds a
+  // second one and structured-clones 400 states back across the boundary.
+  await expect(page.locator("text=Recompiling Causal History")).toBeHidden({ timeout: 360_000 });
   expect(progressValues.size).toBeGreaterThan(1); // progress actually changed
 
   // Branch tag updated; split-screen comparison active.
