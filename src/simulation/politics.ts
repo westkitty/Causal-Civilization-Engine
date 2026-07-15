@@ -243,7 +243,7 @@ export function updatePolitics(state: WorldState, ledger: CausalLedger, year: nu
 
         for (const item of taxReductions) {
           ledger.addEvent({
-            eventId: `wealth_change_${item.s.id}_tax_${year}`,
+            eventId: `wealth_change_${item.s.id}_tax_${govId}_${year}`,
             time: { year },
             eventType: "settlement_wealth_changed",
             location: { cellId: item.s.cellId, settlementId: item.s.id },

@@ -8,6 +8,12 @@ export interface CausalChainStep {
   summary: string;
 }
 
+export interface CausalTraceQuery {
+  entityId: string;
+  field: string;
+  interventionEventId: string;
+}
+
 export interface CausalAncestryResult {
   status:
     | "verified_causal_path"
@@ -21,12 +27,13 @@ export interface CausalAncestryResult {
 }
 
 export function traceCausalAncestry(
-  entityId: string,
+  query: CausalTraceQuery,
   stateA: WorldState,
   stateB: WorldState | undefined,
-  _ledgerA: CausalLedger,
+  ledgerA: CausalLedger,
   ledgerB: CausalLedger | undefined
 ): CausalAncestryResult {
+  const { entityId, field, interventionEventId } = query;
   if (!stateB || !ledgerB) {
     return {
       status: "unrelated_difference",
@@ -37,36 +44,19 @@ export function traceCausalAncestry(
     };
   }
 
-  // Find the intervention event in ledgerB
-  const interventionEvent = ledgerB.getAllEvents().find(e => e.eventType === "timeline_intervention");
-  if (!interventionEvent) {
-    return {
-      status: "unrelated_difference",
-      eventIds: [],
-      missingEventIds: [],
-      path: [],
-      confidence: 0
-    };
-  }
-  const interventionId = interventionEvent.eventId;
+  // 1. Confirm the selected field actually differs between states
+  const getEntityValue = (state: WorldState, entId: string, fld: string): any => {
+    if (state.bridges[entId]) return state.bridges[entId][fld as keyof typeof state.bridges[string]];
+    if (state.routes[entId]) return state.routes[entId][fld as keyof typeof state.routes[string]];
+    if (state.settlements[entId]) return state.settlements[entId][fld as keyof typeof state.settlements[string]];
+    if (state.scars[entId]) return state.scars[entId][fld as keyof typeof state.scars[string]];
+    return undefined;
+  };
 
-  // 1. Determine if there is actually a difference for this entity between stateA and stateB
-  let hasDifference = false;
-  if (stateA.bridges[entityId] || stateB.bridges[entityId]) {
-    const bA = stateA.bridges[entityId];
-    const bB = stateB.bridges[entityId];
-    hasDifference = !bA || !bB || bA.status !== bB.status;
-  } else if (stateA.routes[entityId] || stateB.routes[entityId]) {
-    const rA = stateA.routes[entityId];
-    const rB = stateB.routes[entityId];
-    hasDifference = !rA || !rB || rA.travelTime !== rB.travelTime || rA.capacity !== rB.capacity;
-  } else if (stateA.settlements[entityId] || stateB.settlements[entityId]) {
-    const sA = stateA.settlements[entityId];
-    const sB = stateB.settlements[entityId];
-    hasDifference = !sA || !sB || sA.population !== sB.population || sA.wealth !== sB.wealth || sA.abandoned !== sB.abandoned;
-  }
+  const hasEntityA = !!(stateA.bridges[entityId] || stateA.routes[entityId] || stateA.settlements[entityId] || stateA.scars[entityId]);
+  const hasEntityB = !!(stateB.bridges[entityId] || stateB.routes[entityId] || stateB.settlements[entityId] || stateB.scars[entityId]);
 
-  if (!hasDifference) {
+  if (!hasEntityA && !hasEntityB) {
     return {
       status: "unrelated_difference",
       eventIds: [],
@@ -76,10 +66,55 @@ export function traceCausalAncestry(
     };
   }
 
-  // 2. Find focal events in ledgerB that affect this entity
-  const focalEvents = ledgerB.getAllEvents().filter(e => 
-    e.affectedEntityIds.includes(entityId) || e.actorIds.includes(entityId)
+  let differs = false;
+  if (hasEntityA !== hasEntityB) {
+    differs = true;
+  } else {
+    const valA = getEntityValue(stateA, entityId, field);
+    const valB = getEntityValue(stateB, entityId, field);
+    if (Array.isArray(valA) || Array.isArray(valB)) {
+      differs = JSON.stringify(valA) !== JSON.stringify(valB);
+    } else {
+      differs = valA !== valB;
+    }
+  }
+
+  if (!differs) {
+    return {
+      status: "unrelated_difference",
+      eventIds: [],
+      missingEventIds: [],
+      path: [],
+      confidence: 1.0
+    };
+  }
+
+  // 2. Identify focal branch events in ledgerB whose immediateEffects modify that exact entity and field
+  let focalEvents = ledgerB.getAllEvents().filter(e =>
+    e.immediateEffects.some(eff => eff.entityId === entityId && eff.field === field)
   );
+
+  // Filter to keep only branch-specific or quantitatively different ones compared to ledgerA
+  focalEvents = focalEvents.filter(evB => {
+    const evA = ledgerA.getEvent(evB.eventId);
+    if (!evA) {
+      // Branch-specific event
+      return true;
+    }
+    // Check if the immediateEffect for entityId and field differs quantitatively
+    const effB = evB.immediateEffects.find(eff => eff.entityId === entityId && eff.field === field);
+    const effA = evA.immediateEffects.find(eff => eff.entityId === entityId && eff.field === field);
+    if (!effA || !effB) return true;
+    return effB.before !== effA.before || effB.after !== effA.after;
+  });
+
+  // Fallback for suppressed entities
+  if (focalEvents.length === 0 && hasEntityA && !hasEntityB) {
+    const intervEvent = ledgerB.getEvent(interventionEventId);
+    if (intervEvent && intervEvent.affectedEntityIds.includes(entityId)) {
+      focalEvents.push(intervEvent);
+    }
+  }
 
   if (focalEvents.length === 0) {
     return {
@@ -91,12 +126,11 @@ export function traceCausalAncestry(
     };
   }
 
-  // 3. BFS search from focal events back to the intervention event
-  const focalEventIds = focalEvents.map(e => e.eventId);
-  const queue: string[] = [...focalEventIds];
+  // 3. BFS search from focal events back to the intervention
   const visited = new Set<string>();
-  const cameFrom: Record<string, string> = {}; // childId -> parentId
-  let foundInterventionId: string | null = null;
+  const cameFrom: Record<string, string> = {}; // parentId -> childId
+  const queue: string[] = focalEvents.map(e => e.eventId);
+  let reachedIntervention = false;
   const missingEvents = new Set<string>();
 
   while (queue.length > 0) {
@@ -104,31 +138,29 @@ export function traceCausalAncestry(
     if (visited.has(currId)) continue;
     visited.add(currId);
 
+    if (currId === interventionEventId) {
+      reachedIntervention = true;
+      break;
+    }
+
     const currEvent = ledgerB.getEvent(currId);
     if (!currEvent) {
       missingEvents.add(currId);
       continue;
     }
 
-    if (currId === interventionId) {
-      foundInterventionId = currId;
-      break;
-    }
-
     for (const parentId of currEvent.parentEventIds) {
-      if (!visited.has(parentId)) {
+      if (!visited.has(parentId) && !queue.includes(parentId)) {
         cameFrom[parentId] = currId;
         queue.push(parentId);
       }
     }
   }
 
-  const missingList = Array.from(missingEvents);
-  
-  if (foundInterventionId && missingList.length === 0) {
-    // Reconstruct chronological path from intervention to focal event
+  if (reachedIntervention && missingEvents.size === 0) {
+    // Reconstruct path from interventionEventId to focal event
     const eventIdsPath: string[] = [];
-    let curr: string | undefined = foundInterventionId;
+    let curr: string | undefined = interventionEventId;
     while (curr) {
       eventIdsPath.push(curr);
       curr = cameFrom[curr];
@@ -162,8 +194,8 @@ export function traceCausalAncestry(
   return {
     status: "unresolved_ancestry",
     eventIds: Array.from(visited),
-    missingEventIds: missingList,
+    missingEventIds: Array.from(missingEvents),
     path: [],
-    confidence: missingList.length > 0 ? 0.0 : 0.2
+    confidence: missingEvents.size > 0 ? 0.0 : 0.2
   };
 }

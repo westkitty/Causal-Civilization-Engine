@@ -30,6 +30,13 @@
 - `[x]` **Phase 10 & 11: Clean Repository and Correct Documentation**
   - `[x]` Move diagnostics out of `src/` to `scripts/`
   - `[x]` Create and polish `task.md` and `walkthrough.md` in the project root
+- `[x]` **Phase 12: Ledger Integrity, Unique Event IDs, and Causal Proofs**
+  - `[x]` Throw error on duplicate causal event ID in `CausalLedger.addEvent`
+  - `[x]` Prevent event ID collisions by making econ, bridge, and tax events counterparty-specific
+  - `[x]` Make causal ancestry tracing branch-aware and field-specific in `traceCausalAncestry`
+  - `[x]` Implement Dijkstra road capacity skipping to allow routing around capacity bottlenecks
+  - `[x]` Add exhaustive assertions verifying 5-stage chronological signature causal chain
+  - `[x]` Verify buyer/seller wealth changes and transport drag double-entry math conservation
 
 ## Repository completion rule
 

@@ -64,6 +64,7 @@ export function resolveTransportPath(
     if (dist[u] === Infinity) break;
 
     for (const edge of adj[u]) {
+      if (edge.capacity <= 0) continue;
       // Dynamic travel time check in Dijkstra: if route crosses an inactive bridge, travelTime increases
       let effectiveTravelTime = edge.travelTime;
       const bridge = Object.values(state.bridges).find(b => b.routeEdgeId === edge.routeId);
@@ -437,7 +438,7 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
       // C. Market access changed
       if (buyer.marketAccess !== buyerBeforeAccess) {
         ledger.addEvent({
-          eventId: `market_access_${buyer.id}_${good}_${year}`,
+          eventId: `market_access_${buyer.id}_from_${seller.id}_${good}_${year}`,
           time: { year },
           eventType: "market_access_changed",
           location: { cellId: buyer.cellId },
@@ -457,7 +458,7 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
       }
       if (seller.marketAccess !== sellerBeforeAccess) {
         ledger.addEvent({
-          eventId: `market_access_${seller.id}_${good}_${year}`,
+          eventId: `market_access_${seller.id}_to_${buyer.id}_${good}_${year}`,
           time: { year },
           eventType: "market_access_changed",
           location: { cellId: seller.cellId },
@@ -478,7 +479,7 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
 
       // D. Settlement wealth changed
       ledger.addEvent({
-        eventId: `wealth_change_${buyer.id}_import_${good}_${year}`,
+        eventId: `wealth_change_${buyer.id}_import_from_${seller.id}_${good}_${year}`,
         time: { year },
         eventType: "settlement_wealth_changed",
         location: { cellId: buyer.cellId },
@@ -497,7 +498,7 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
       });
 
       ledger.addEvent({
-        eventId: `wealth_change_${seller.id}_export_${good}_${year}`,
+        eventId: `wealth_change_${seller.id}_export_to_${buyer.id}_${good}_${year}`,
         time: { year },
         eventType: "settlement_wealth_changed",
         location: { cellId: seller.cellId },

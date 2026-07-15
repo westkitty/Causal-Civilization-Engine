@@ -27,12 +27,10 @@ describe("Causal Civilization Engine - Audited Deterministic Kernel", () => {
 
     expect(hash1).toBe(hash2);
 
-    // Verify state hashes match at every single year
     for (let y = 0; y <= 100; y++) {
       expect(branch1.yearHashes[y]).toBe(branch2.yearHashes[y]);
     }
 
-    // Verify ledger hashes match
     const ledgerHash1 = fnv1a64(canonicalStringify(ledger1.getAllEvents()));
     const ledgerHash2 = fnv1a64(canonicalStringify(ledger2.getAllEvents()));
     expect(ledgerHash1).toBe(ledgerHash2);
@@ -87,7 +85,7 @@ describe("Causal Civilization Engine - Audited Deterministic Kernel", () => {
   it("should isolate counterfactual timelines, keeping pre-intervention prefix identical", () => {
     const parentBranch = new Branch("main");
     const parentLedger = new CausalLedger("main");
-    const parentState = runFullSimulation(testSeed, parentBranch, parentLedger, 100);
+    runFullSimulation(testSeed, parentBranch, parentLedger, 100);
 
     const intervention: TimelineIntervention = {
       interventionId: "interv_suppress_bridge_10",
@@ -99,7 +97,7 @@ describe("Causal Civilization Engine - Audited Deterministic Kernel", () => {
       parameters: {},
     };
 
-    const { state: branchState, branch: subBranch, ledger: subLedger } = resimulateBranch(
+    const { branch: subBranch, ledger: subLedger } = resimulateBranch(
       parentBranch,
       parentLedger,
       intervention,
@@ -109,8 +107,6 @@ describe("Causal Civilization Engine - Audited Deterministic Kernel", () => {
     for (let y = 0; y < 10; y++) {
       expect(subBranch.yearHashes[y]).toBe(parentBranch.yearHashes[y]);
     }
-
-    expect(deterministicHash(branchState)).not.toBe(deterministicHash(parentState));
 
     const intervEvent = subLedger.getEvent(intervention.interventionId);
     expect(intervEvent).toBeDefined();
@@ -154,71 +150,50 @@ describe("Causal Civilization Engine - Audited Deterministic Kernel", () => {
     expect(deterministicHash(state1)).not.toBe(deterministicHash(state2));
   });
 
-  // 7. Generic Causal Ancestry - Direct bridge path, route path, trade path, and wealth path
-  it("should trace generic causal ancestry chains through ledger event parent links", () => {
-    const parentBranch = new Branch("main");
-    const parentLedger = new CausalLedger("main");
-    const parentState = runFullSimulation(testSeed, parentBranch, parentLedger, 50);
-
-    // Assert a bridge was built in main
-    const activeBridges = Object.values(parentState.bridges).filter(b => b.status === "active");
-    expect(activeBridges.length).toBeGreaterThan(0);
-    const bridgeId = activeBridges[0].id;
-
-    // Suppress it in branch
-    const intervention: TimelineIntervention = {
-      interventionId: "interv_suppress_bridge_10",
-      parentBranchId: "main",
-      newBranchId: "suppress_bridge_branch",
-      insertionYear: 10,
-      targetIds: [bridgeId],
-      operation: "suppress_event",
-      parameters: {},
-    };
-
-    const { state: branchState, ledger: subLedger } = resimulateBranch(
-      parentBranch,
-      parentLedger,
-      intervention,
-      50
-    );
-
-    // Direct bridge path check
-    const resultBridge = traceCausalAncestry(bridgeId, parentState, branchState, parentLedger, subLedger);
-    expect(resultBridge.status).toBe("verified_causal_path");
-    expect(resultBridge.confidence).toBe(1.0);
-    expect(resultBridge.path.some(step => step.eventType === "timeline_intervention")).toBe(true);
-
-    // Route path check
-    const routeId = activeBridges[0].routeEdgeId;
-    const resultRoute = traceCausalAncestry(routeId, parentState, branchState, parentLedger, subLedger);
-    expect(resultRoute.status).toBe("verified_causal_path");
-    expect(resultRoute.confidence).toBe(1.0);
-
-    // Wealth path check: find a settlement whose wealth differs
-    let divergentSetId = "";
-    for (const sId of Object.keys(parentState.settlements)) {
-      if (parentState.settlements[sId].wealth !== branchState.settlements[sId].wealth) {
-        divergentSetId = sId;
-        break;
-      }
-    }
-
-    if (divergentSetId) {
-      const resultWealth = traceCausalAncestry(divergentSetId, parentState, branchState, parentLedger, subLedger);
-      expect(resultWealth.status).toBe("verified_causal_path");
-      expect(resultWealth.confidence).toBe(1.0);
-      expect(resultWealth.path.length).toBeGreaterThan(1);
-    }
-  }, 40000);
+  // 7. duplicate event ID insertion rejection
+  it("should throw an error when trying to add an event with a duplicate ID to the ledger", () => {
+    const ledger = new CausalLedger("main");
+    ledger.addEvent({
+      eventId: "dup_event_id",
+      time: { year: 1 },
+      eventType: "test_event",
+      location: {},
+      actorIds: [],
+      affectedEntityIds: [],
+      conditions: [],
+      immediateEffects: [],
+      parentEventIds: [],
+      resultingEventIds: [],
+      ruleId: "test",
+      summaryTemplate: "Test",
+      summaryArguments: {},
+      confidence: 1.0,
+    });
+    expect(() => {
+      ledger.addEvent({
+        eventId: "dup_event_id",
+        time: { year: 2 },
+        eventType: "test_event_2",
+        location: {},
+        actorIds: [],
+        affectedEntityIds: [],
+        conditions: [],
+        immediateEffects: [],
+        parentEventIds: [],
+        resultingEventIds: [],
+        ruleId: "test",
+        summaryTemplate: "Test 2",
+        summaryArguments: {},
+        confidence: 1.0,
+      });
+    }).toThrow("Duplicate causal event ID: dup_event_id");
+  });
 
   // 8. Causal tracing negative and missing-reference cases
   it("should handle unconnected branch differences and missing event references correctly", () => {
-    // A. Unresolved negative case
     const mockStateA = runFullSimulation(testSeed, new Branch("main"), new CausalLedger("main"), 10);
     const mockStateB = JSON.parse(JSON.stringify(mockStateA)) as WorldState;
     
-    // Modify mockStateB to create a difference
     const setIds = Object.keys(mockStateB.settlements);
     expect(setIds.length).toBeGreaterThan(0);
     const targetSetId = setIds[0];
@@ -227,7 +202,6 @@ describe("Causal Civilization Engine - Audited Deterministic Kernel", () => {
     const mockLedgerA = new CausalLedger("main");
     const mockLedgerB = new CausalLedger("branch");
 
-    // Add intervention event
     mockLedgerB.addEvent({
       eventId: "interv_10",
       time: { year: 10 },
@@ -245,7 +219,6 @@ describe("Causal Civilization Engine - Audited Deterministic Kernel", () => {
       confidence: 1.0,
     });
 
-    // Add a focal event for the settlement wealth change but with NO parent link back to intervention
     mockLedgerB.addEvent({
       eventId: "random_wealth_change",
       time: { year: 12 },
@@ -254,8 +227,10 @@ describe("Causal Civilization Engine - Audited Deterministic Kernel", () => {
       actorIds: [targetSetId],
       affectedEntityIds: [targetSetId],
       conditions: [],
-      immediateEffects: [],
-      parentEventIds: [], // Empty -> unconnected
+      immediateEffects: [
+        { entityId: targetSetId, component: "settlements", field: "wealth", before: 100, after: 600 }
+      ], 
+      parentEventIds: [], 
       resultingEventIds: [],
       ruleId: "manual_growth",
       summaryTemplate: "Wealth change",
@@ -263,66 +238,318 @@ describe("Causal Civilization Engine - Audited Deterministic Kernel", () => {
       confidence: 1.0,
     });
 
-    const unresolvedResult = traceCausalAncestry(targetSetId, mockStateA, mockStateB, mockLedgerA, mockLedgerB);
+    const query = {
+      entityId: targetSetId,
+      field: "wealth",
+      interventionEventId: "interv_10"
+    };
+
+    const unresolvedResult = traceCausalAncestry(query, mockStateA, mockStateB, mockLedgerA, mockLedgerB);
     expect(unresolvedResult.status).toBe("unresolved_ancestry");
     expect(unresolvedResult.missingEventIds.length).toBe(0);
 
-    // B. Missing-reference case
     mockLedgerB.events["random_wealth_change"].parentEventIds = ["non_existent_event_id"];
-    const missingResult = traceCausalAncestry(targetSetId, mockStateA, mockStateB, mockLedgerA, mockLedgerB);
+    const missingResult = traceCausalAncestry(query, mockStateA, mockStateB, mockLedgerA, mockLedgerB);
     expect(missingResult.status).toBe("unresolved_ancestry");
     expect(missingResult.missingEventIds).toContain("non_existent_event_id");
   });
 
-  // 9. Transport constraints & River barriers
-  it("should enforce transport capacity, river barriers, and correct path routing", () => {
-    const state = runFullSimulation(testSeed, new Branch("main"), new CausalLedger("main"), 20);
+  // Helper mock factory for deterministic transport fixtures
+  function createMockState(): WorldState {
+    return {
+      seed: "test-seed",
+      year: 1,
+      mapWidth: 10,
+      mapHeight: 10,
+      elevation: new Array(100).fill(10),
+      moisture: new Array(100).fill(50),
+      temperature: new Array(100).fill(20),
+      flowAccumulation: new Array(100).fill(0),
+      flowDirection: new Array(100).fill(0),
+      soilFertility: new Array(100).fill(100),
+      biomes: new Array(100).fill("grassland"),
+      resources: {
+        oreGrade: new Array(100).fill(0),
+        timberStock: new Array(100).fill(0),
+      },
+      politicalControl: {},
+      settlements: {
+        s_a: { id: "s_a", name: "Settlement A", cellId: 0, population: 100, carryingCapacity: 1000, foodAccess: 1, waterSecurity: 1, marketAccess: 0.5, diseaseBurden: 0, wealth: 1000, establishedYear: 0, abandoned: false },
+        s_b: { id: "s_b", name: "Settlement B", cellId: 9, population: 100, carryingCapacity: 1000, foodAccess: 1, waterSecurity: 1, marketAccess: 0.5, diseaseBurden: 0, wealth: 1000, establishedYear: 0, abandoned: false },
+        s_c: { id: "s_c", name: "Settlement C", cellId: 99, population: 100, carryingCapacity: 1000, foodAccess: 1, waterSecurity: 1, marketAccess: 0.5, diseaseBurden: 0, wealth: 1000, establishedYear: 0, abandoned: false },
+      },
+      routes: {},
+      bridges: {},
+      governments: {},
+      cohorts: {},
+      landmarks: {},
+      scars: {},
+    };
+  }
 
-    const sIds = Object.keys(state.settlements);
-    expect(sIds.length).toBeGreaterThan(1);
-    
-    // Pick two settlements separated by a river
-    // Verify resolving transport path respects river crossing costs when off-network
-    const pathOffNetwork = resolveTransportPath(state, sIds[0], sIds[1]);
-    expect(pathOffNetwork).toBeDefined();
+  // 9. Strengthen Transport Tests
+  it("should enforce transport ranges, capacity bottlenecking, river costs, and select valid alternate routes over zero-capacity routes", () => {
+    // A. Capacity bottleneck test
+    const state = createMockState();
+    state.routes["route_ab_1"] = {
+      id: "route_ab_1",
+      type: "road",
+      length: 9,
+      travelTime: 9,
+      capacity: 15,
+      condition: 1.0,
+      constructionYear: 0,
+      points: [[0,0], [1,0], [2,0], [3,0], [4,0], [5,0], [6,0], [7,0], [8,0], [9,0]],
+    };
+    const path = resolveTransportPath(state, "s_a", "s_b");
+    expect(path).toBeDefined();
+    expect(path?.residualCapacity).toBe(15);
 
-    // Verify bridge removal alters routing when bridge belonged to that path
-    if (pathOffNetwork && pathOffNetwork.crossingAssetIds.length > 0) {
-      const activeBridgeId = pathOffNetwork.crossingAssetIds[0];
-      const stateNoBridge = JSON.parse(JSON.stringify(state)) as WorldState;
-      
-      // Deactivate the bridge
-      stateNoBridge.bridges[activeBridgeId].status = "ruined";
+    // B. Range limit check
+    const stateRange = createMockState();
+    stateRange.mapWidth = 50;
+    stateRange.mapHeight = 50;
+    stateRange.settlements["s_c"].cellId = 2499; // (49, 49) -> distance is ~69 cells
+    const pathTooFar = resolveTransportPath(stateRange, "s_a", "s_c");
+    expect(pathTooFar).toBeNull(); // exceeds off-network limit of 25 cells
 
-      const pathNoBridge = resolveTransportPath(stateNoBridge, sIds[0], sIds[1]);
-      if (pathNoBridge) {
-        expect(pathNoBridge.totalTravelTime).toBeGreaterThan(pathOffNetwork.totalTravelTime);
+    // C. River crossing barrier check
+    const stateRiver = createMockState();
+    stateRiver.mapWidth = 5;
+    stateRiver.mapHeight = 5;
+    stateRiver.settlements = {
+      s_a: { id: "s_a", name: "Settlement A", cellId: 0, population: 100, carryingCapacity: 1000, foodAccess: 1, waterSecurity: 1, marketAccess: 0.5, diseaseBurden: 0, wealth: 1000, establishedYear: 0, abandoned: false },
+      s_b: { id: "s_b", name: "Settlement B", cellId: 2, population: 100, carryingCapacity: 1000, foodAccess: 1, waterSecurity: 1, marketAccess: 0.5, diseaseBurden: 0, wealth: 1000, establishedYear: 0, abandoned: false },
+    };
+    stateRiver.flowAccumulation[1] = 1000; // cell 1 is a river
+
+    const pathNoBridge = resolveTransportPath(stateRiver, "s_a", "s_b");
+    expect(pathNoBridge).toBeDefined();
+    const timeNoBridge = pathNoBridge!.totalTravelTime;
+
+    stateRiver.bridges["bridge_1"] = {
+      id: "bridge_1",
+      routeEdgeId: "",
+      cellId: 1,
+      span: 10,
+      constructionYear: 0,
+      status: "active",
+    };
+    const pathWithBridge = resolveTransportPath(stateRiver, "s_a", "s_b");
+    expect(pathWithBridge).toBeDefined();
+    const timeWithBridge = pathWithBridge!.totalTravelTime;
+    expect(timeNoBridge).toBeGreaterThan(timeWithBridge); // Bridge crossing should be cheaper
+
+    // D. Bridge removal/ruined check
+    stateRiver.bridges["bridge_1"].status = "ruined";
+    const pathRuinedBridge = resolveTransportPath(stateRiver, "s_a", "s_b");
+    expect(pathRuinedBridge?.totalTravelTime).toBeCloseTo(timeNoBridge, 4);
+
+    // E. Removing unrelated bridge check
+    stateRiver.bridges["bridge_1"].status = "active";
+    stateRiver.bridges["bridge_unrelated"] = {
+      id: "bridge_unrelated",
+      routeEdgeId: "",
+      cellId: 4, 
+      span: 10,
+      constructionYear: 0,
+      status: "active",
+    };
+    const pathBefore = resolveTransportPath(stateRiver, "s_a", "s_b");
+    stateRiver.bridges["bridge_unrelated"].status = "ruined";
+    const pathAfter = resolveTransportPath(stateRiver, "s_a", "s_b");
+    expect(pathBefore?.totalTravelTime).toBe(pathAfter?.totalTravelTime);
+
+    // F. Zero-capacity cheapest route fallback selection check
+    const stateAlt = createMockState();
+    stateAlt.settlements = {
+      s_a: { id: "s_a", name: "Settlement A", cellId: 0, population: 100, carryingCapacity: 1000, foodAccess: 1, waterSecurity: 1, marketAccess: 0.5, diseaseBurden: 0, wealth: 1000, establishedYear: 0, abandoned: false },
+      s_b: { id: "s_b", name: "Settlement B", cellId: 2, population: 100, carryingCapacity: 1000, foodAccess: 1, waterSecurity: 1, marketAccess: 0.5, diseaseBurden: 0, wealth: 1000, establishedYear: 0, abandoned: false },
+    };
+    // Route 1 (cheapest, capacity = 0)
+    stateAlt.routes["r_cheap"] = {
+      id: "r_cheap",
+      type: "road",
+      length: 2,
+      travelTime: 5,
+      capacity: 0,
+      condition: 1.0,
+      constructionYear: 0,
+      points: [[0,0], [1,0], [2,0]],
+    };
+    // Route 2 (longer, capacity = 20) via s_mid
+    stateAlt.settlements["s_mid"] = { id: "s_mid", name: "Settlement Mid", cellId: 10, population: 100, carryingCapacity: 1000, foodAccess: 1, waterSecurity: 1, marketAccess: 0.5, diseaseBurden: 0, wealth: 1000, establishedYear: 0, abandoned: false };
+    stateAlt.routes["r_mid1"] = {
+      id: "r_mid1",
+      type: "road",
+      length: 2,
+      travelTime: 5,
+      capacity: 20,
+      condition: 1.0,
+      constructionYear: 0,
+      points: [[0,0], [0,1]], 
+    };
+    stateAlt.routes["r_mid2"] = {
+      id: "r_mid2",
+      type: "road",
+      length: 2,
+      travelTime: 5,
+      capacity: 20,
+      condition: 1.0,
+      constructionYear: 0,
+      points: [[0,1], [1,1], [2,0]], 
+    };
+
+    const pathAlt = resolveTransportPath(stateAlt, "s_a", "s_b");
+    expect(pathAlt).toBeDefined();
+    expect(pathAlt?.edgeIds).toContain("r_mid1");
+    expect(pathAlt?.edgeIds).toContain("r_mid2");
+    expect(pathAlt?.edgeIds).not.toContain("r_cheap");
+  });
+
+  // 10. Explicit Transaction Reconciliation
+  it("should reconcile transaction accounting conservation, parent links, and capacity limits", () => {
+    const branch = new Branch("main");
+    const ledger = new CausalLedger("main");
+    const state = runFullSimulation(testSeed, branch, ledger, 40);
+
+    const tradeAllocations = ledger.getAllEvents().filter(e => e.eventType === "trade_allocation");
+    expect(tradeAllocations.length).toBeGreaterThan(0);
+
+    const wealthEvents = ledger.getAllEvents().filter(e => e.eventType === "settlement_wealth_changed");
+    const tradeWealthEvents = wealthEvents.filter(e => e.ruleId === "wealth_deduction" || e.ruleId === "wealth_addition");
+
+    // Expected total transaction sides: 2 * tradeAllocations.length
+    expect(tradeWealthEvents.length).toBe(2 * tradeAllocations.length);
+
+    for (const alloc of tradeAllocations) {
+      const buyerEvent = tradeWealthEvents.find(e => e.parentEventIds.includes(alloc.eventId) && e.ruleId === "wealth_deduction");
+      const sellerEvent = tradeWealthEvents.find(e => e.parentEventIds.includes(alloc.eventId) && e.ruleId === "wealth_addition");
+
+      expect(buyerEvent).toBeDefined();
+      expect(sellerEvent).toBeDefined();
+
+      const buyerBefore = buyerEvent!.immediateEffects[0].before;
+      const buyerAfter = buyerEvent!.immediateEffects[0].after;
+      const sellerBefore = sellerEvent!.immediateEffects[0].before;
+      const sellerAfter = sellerEvent!.immediateEffects[0].after;
+
+      const transportSink = alloc.conditions[0].observed.find(o => o.name === "transportExpense")?.value || 0;
+
+      expect(buyerBefore - buyerAfter).toBeCloseTo(sellerAfter - sellerBefore + transportSink, 4);
+    }
+
+    const routeUsage: Record<string, number> = {};
+    for (const alloc of tradeAllocations) {
+      const pathEvent = ledger.getAllEvents().find(e => e.eventType === "transport_path_resolved" && alloc.parentEventIds.includes(e.eventId));
+      if (pathEvent) {
+        const vol = alloc.conditions[0].observed.find(o => o.name === "volume")?.value || 0;
+        for (const entId of pathEvent.affectedEntityIds) {
+          if (state.routes[entId]) {
+            routeUsage[entId] = (routeUsage[entId] || 0) + vol;
+          }
+        }
+      }
+    }
+
+    for (const rId of Object.keys(routeUsage)) {
+      const route = state.routes[rId];
+      if (route) {
+        expect(routeUsage[rId]).toBeLessThanOrEqual(route.capacity);
       }
     }
   }, 40000);
 
-  // 10. Economic & transaction reconciliation
-  it("should preserve double-entry conservation: buyer wealth reduction = seller revenue + transport sink", () => {
-    const branch = new Branch("main");
-    const ledger = new CausalLedger("main");
-    runFullSimulation(testSeed, branch, ledger, 40);
+  // 11. Complete 5-Stage Chronological Signature Chain Proof & Causal Diagnostic
+  it("should verify the complete five-stage chronological signature causal chain and print diagnostic trace", () => {
+    const parentBranch = new Branch("main");
+    const parentLedger = new CausalLedger("main");
+    const parentState = runFullSimulation(testSeed, parentBranch, parentLedger, 50);
 
-    // Verify all trade allocation events balance exactly
-    const tradeAllocations = ledger.getAllEvents().filter(e => e.eventType === "trade_allocation");
-    expect(tradeAllocations.length).toBeGreaterThan(0);
+    const activeBridges = Object.values(parentState.bridges).filter(b => b.status === "active");
+    expect(activeBridges.length).toBeGreaterThan(0);
+    const bridgeId = activeBridges[0].id;
 
-    for (const alloc of tradeAllocations) {
-      const vol = alloc.conditions[0].observed.find(o => o.name === "volume")?.value || 0;
-      const unitPrice = alloc.conditions[0].observed.find(o => o.name === "unitPrice")?.value || 0;
-      const transportSink = alloc.conditions[0].observed.find(o => o.name === "transportExpense")?.value || 0;
+    const intervention: TimelineIntervention = {
+      interventionId: "interv_suppress_bridge_10",
+      parentBranchId: "main",
+      newBranchId: "suppress_bridge_branch",
+      insertionYear: 10,
+      targetIds: [bridgeId],
+      operation: "suppress_event",
+      parameters: {},
+    };
 
-      const good = alloc.summaryArguments.good as string;
-      const basePrice = good === "grain" ? 1.0 : (good === "timber" ? 2.0 : 5.0);
+    const { state: branchState, ledger: subLedger } = resimulateBranch(
+      parentBranch,
+      parentLedger,
+      intervention,
+      50
+    );
 
-      const buyerReduction = vol * unitPrice;
-      const sellerRevenue = vol * basePrice;
+    expect(parentState.bridges[bridgeId]).toBeDefined();
+    expect(parentState.bridges[bridgeId].status).toBe("active");
+    expect(branchState.bridges[bridgeId]).toBeUndefined();
 
-      expect(buyerReduction).toBeCloseTo(sellerRevenue + transportSink, 4);
+    const routeId = activeBridges[0].routeEdgeId;
+    expect(parentState.routes[routeId]).toBeDefined();
+    expect(branchState.routes[routeId]).toBeDefined();
+    expect(parentState.routes[routeId].travelTime).not.toBe(branchState.routes[routeId].travelTime);
+
+    let divergentSetId = "";
+    for (const sId of Object.keys(parentState.settlements)) {
+      if (parentState.settlements[sId].wealth !== branchState.settlements[sId].wealth) {
+        divergentSetId = sId;
+        break;
+      }
+    }
+    expect(divergentSetId).not.toBe("");
+
+    const query = {
+      entityId: divergentSetId,
+      field: "wealth",
+      interventionEventId: intervention.interventionId,
+    };
+    const traceResult = traceCausalAncestry(query, parentState, branchState, parentLedger, subLedger);
+    expect(traceResult.status).toBe("verified_causal_path");
+
+    // Print the diagnostic to stdout
+    console.log("=== CAUSAL DIAGNOSTIC TRACE ===");
+    for (let i = 0; i < traceResult.path.length; i++) {
+      const step = traceResult.path[i];
+      console.log(`[Stage ${i + 1}] Event ID: ${step.eventId} | Type: ${step.eventType}`);
+      if (i > 0) {
+        const currentEvent = subLedger.getEvent(step.eventId)!;
+        const prevEvent = subLedger.getEvent(traceResult.path[i - 1].eventId)!;
+        console.log(`   Child's Parent Event IDs: ${JSON.stringify(currentEvent.parentEventIds)}`);
+        console.log(`   Proves previous ID (${prevEvent.eventId}) is included: ${currentEvent.parentEventIds.includes(prevEvent.eventId)}`);
+        expect(currentEvent.parentEventIds).toContain(prevEvent.eventId);
+      }
+    }
+    console.log("===============================");
+
+    // Verify expected exact sequence of types exists chronologically
+    const eventTypes = traceResult.path.map(step => step.eventType);
+    const expectedSequence = [
+      "timeline_intervention",
+      "road_construction",
+      "transport_path_resolved",
+      "trade_allocation",
+      "settlement_wealth_changed"
+    ];
+
+    let seqIndex = 0;
+    for (const et of eventTypes) {
+      if (seqIndex < expectedSequence.length && et === expectedSequence[seqIndex]) {
+        seqIndex++;
+      }
+    }
+    expect(seqIndex).toBe(expectedSequence.length);
+
+    // Verify all path event IDs resolve
+    for (const step of traceResult.path) {
+      const ev = subLedger.getEvent(step.eventId);
+      expect(ev).toBeDefined();
     }
   }, 40000);
 });

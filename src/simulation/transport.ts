@@ -228,7 +228,7 @@ export function updateTransport(state: WorldState, ledger: CausalLedger, branch:
 
               if (s1.wealth !== before1) {
                 ledger.addEvent({
-                  eventId: `wealth_change_${s1.id}_invest_${year}`,
+                  eventId: `wealth_change_${s1.id}_invest_${bId}_${year}`,
                   time: { year },
                   eventType: "settlement_wealth_changed",
                   location: { cellId: s1.cellId, settlementId: s1.id },
@@ -249,7 +249,7 @@ export function updateTransport(state: WorldState, ledger: CausalLedger, branch:
 
               if (s2.wealth !== before2) {
                 ledger.addEvent({
-                  eventId: `wealth_change_${s2.id}_invest_${year}`,
+                  eventId: `wealth_change_${s2.id}_invest_${bId}_${year}`,
                   time: { year },
                   eventType: "settlement_wealth_changed",
                   location: { cellId: s2.cellId, settlementId: s2.id },

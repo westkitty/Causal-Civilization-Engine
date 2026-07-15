@@ -9,6 +9,9 @@ export class CausalLedger {
   }
 
   addEvent(event: Omit<HistoricalEvent, "branchId">): HistoricalEvent {
+    if (this.events[event.eventId]) {
+      throw new Error(`Duplicate causal event ID: ${event.eventId}`);
+    }
     const fullEvent: HistoricalEvent = {
       ...event,
       branchId: this.branchId,

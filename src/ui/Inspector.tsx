@@ -98,7 +98,13 @@ export const Inspector: React.FC<InspectorProps> = ({
   };
 
   const explanation = getCausalExplanation();
-  const causalTrace = traceCausalAncestry(selectedEntityId, stateA, stateB, ledgerA, ledgerB);
+  const intervEvent = ledgerB?.getAllEvents().find(e => e.eventType === "timeline_intervention");
+  const query = {
+    entityId: selectedEntityId,
+    field: isSettlement ? "wealth" : (isBridge ? "status" : "travelTime"),
+    interventionEventId: intervEvent ? intervEvent.eventId : "interv_suppress_bridge_10"
+  };
+  const causalTrace = traceCausalAncestry(query, stateA, stateB, ledgerA, ledgerB);
 
   // 2. Ledger Grounded Causal Q&A Query Tool
   const handleGptQuery = (q: string) => {
