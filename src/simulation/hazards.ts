@@ -30,8 +30,9 @@ export function updateHazards(state: WorldState, ledger: CausalLedger, year: num
           s.__transientReconciliation.losses += (wealthBefore - s.wealth);
         }
 
+        const floodEventId = `flood_${sId}_${year}`;
         ledger.addEvent({
-          eventId: `flood_${sId}_${year}`,
+          eventId: floodEventId,
           time: { year },
           eventType: "flood",
           location: { cellId, settlementId: sId },
@@ -73,6 +74,27 @@ export function updateHazards(state: WorldState, ledger: CausalLedger, year: num
           summaryArguments: { settlementName: s.name, damage },
           confidence: 0.9,
         });
+
+        if (s.wealth !== wealthBefore) {
+          ledger.addEvent({
+            eventId: `wealth_change_${sId}_flood_${year}`,
+            time: { year },
+            eventType: "settlement_wealth_changed",
+            location: { cellId, settlementId: sId },
+            actorIds: [sId],
+            affectedEntityIds: [sId],
+            conditions: [],
+            immediateEffects: [
+              { entityId: sId, component: "settlements", field: "wealth", before: wealthBefore, after: s.wealth }
+            ],
+            parentEventIds: [floodEventId],
+            resultingEventIds: [],
+            ruleId: "flood_wealth_loss",
+            summaryTemplate: "Wealth of {name} decreased by {delta} due to flood damage.",
+            summaryArguments: { name: s.name, delta: (wealthBefore - s.wealth).toFixed(0) },
+            confidence: 1.0,
+          });
+        }
       }
     }
 

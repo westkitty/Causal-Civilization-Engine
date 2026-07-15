@@ -197,8 +197,9 @@ export function updateTransport(state: WorldState, ledger: CausalLedger, branch:
                 s2.__transientReconciliation.investment += (before2 - s2.wealth);
               }
 
+              const bridgeEventId = `build_bridge_${bId}_${year}`;
               ledger.addEvent({
-                eventId: `build_bridge_${bId}_${year}`,
+                eventId: bridgeEventId,
                 time: { year },
                 eventType: "bridge_construction",
                 location: { cellId: riverCrossingCell, routeEdgeId: rId },
@@ -224,6 +225,48 @@ export function updateTransport(state: WorldState, ledger: CausalLedger, branch:
                 summaryArguments: { cellId: riverCrossingCell, s1Name: s1.name, s2Name: s2.name },
                 confidence: 1.0,
               });
+
+              if (s1.wealth !== before1) {
+                ledger.addEvent({
+                  eventId: `wealth_change_${s1.id}_invest_${year}`,
+                  time: { year },
+                  eventType: "settlement_wealth_changed",
+                  location: { cellId: s1.cellId, settlementId: s1.id },
+                  actorIds: [s1.id],
+                  affectedEntityIds: [s1.id],
+                  conditions: [],
+                  immediateEffects: [
+                    { entityId: s1.id, component: "settlements", field: "wealth", before: before1, after: s1.wealth }
+                  ],
+                  parentEventIds: [bridgeEventId],
+                  resultingEventIds: [],
+                  ruleId: "bridge_investment",
+                  summaryTemplate: "Wealth of {name} decreased by {delta} due to bridge investment.",
+                  summaryArguments: { name: s1.name, delta: (before1 - s1.wealth).toFixed(0) },
+                  confidence: 1.0,
+                });
+              }
+
+              if (s2.wealth !== before2) {
+                ledger.addEvent({
+                  eventId: `wealth_change_${s2.id}_invest_${year}`,
+                  time: { year },
+                  eventType: "settlement_wealth_changed",
+                  location: { cellId: s2.cellId, settlementId: s2.id },
+                  actorIds: [s2.id],
+                  affectedEntityIds: [s2.id],
+                  conditions: [],
+                  immediateEffects: [
+                    { entityId: s2.id, component: "settlements", field: "wealth", before: before2, after: s2.wealth }
+                  ],
+                  parentEventIds: [bridgeEventId],
+                  resultingEventIds: [],
+                  ruleId: "bridge_investment",
+                  summaryTemplate: "Wealth of {name} decreased by {delta} due to bridge investment.",
+                  summaryArguments: { name: s2.name, delta: (before2 - s2.wealth).toFixed(0) },
+                  confidence: 1.0,
+                });
+              }
             }
           }
         }

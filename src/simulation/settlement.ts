@@ -271,6 +271,27 @@ export function updateSettlement(state: WorldState, ledger: CausalLedger, year: 
     if (s.__transientReconciliation) {
       s.__transientReconciliation.naturalGrowth += (s.wealth - beforeWealth);
     }
+    if (s.wealth !== beforeWealth) {
+      const delta = s.wealth - beforeWealth;
+      ledger.addEvent({
+        eventId: `wealth_change_${s.id}_growth_${year}`,
+        time: { year },
+        eventType: "settlement_wealth_changed",
+        location: { cellId: s.cellId, settlementId: s.id },
+        actorIds: [s.id],
+        affectedEntityIds: [s.id],
+        conditions: [],
+        immediateEffects: [
+          { entityId: s.id, component: "settlements", field: "wealth", before: beforeWealth, after: s.wealth }
+        ],
+        parentEventIds: [], // natural growth has no specific single parent event
+        resultingEventIds: [],
+        ruleId: "natural_growth_wealth",
+        summaryTemplate: "Wealth of {name} changed by {delta} due to local natural growth.",
+        summaryArguments: { name: s.name, delta: delta.toFixed(0) },
+        confidence: 1.0,
+      });
+    }
 
     // Apply cohort changes proportionally
     const cohorts = state.cohorts[sId] || [];

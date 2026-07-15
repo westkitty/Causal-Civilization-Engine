@@ -191,7 +191,7 @@ export function updatePolitics(state: WorldState, ledger: CausalLedger, year: nu
       const power = state.politicalControl[govId];
 
       let taxCollected = 0;
-      const taxedSettlements: string[] = [];
+      const taxReductions: { s: any; beforeWealth: number; tax: number }[] = [];
 
       for (const sId of sIds) {
         const s = state.settlements[sId];
@@ -210,11 +210,10 @@ export function updatePolitics(state: WorldState, ledger: CausalLedger, year: nu
             const beforeWealth = s.wealth;
             const tax = Math.floor(s.wealth * gov.taxRate);
             s.wealth = Math.max(100, s.wealth - tax);
-            if (s.__transientReconciliation) {
-              s.__transientReconciliation.taxesPaid += (beforeWealth - s.wealth);
+            if (beforeWealth !== s.wealth) {
+              taxReductions.push({ s, beforeWealth, tax: beforeWealth - s.wealth });
+              taxCollected += (beforeWealth - s.wealth);
             }
-            taxCollected += tax;
-            taxedSettlements.push(s.name);
           }
         }
       }
@@ -222,8 +221,9 @@ export function updatePolitics(state: WorldState, ledger: CausalLedger, year: nu
       if (taxCollected > 0) {
         gov.treasury += taxCollected;
 
+        const taxEventId = `tax_${govId}_${year}`;
         ledger.addEvent({
-          eventId: `tax_${govId}_${year}`,
+          eventId: taxEventId,
           time: { year },
           eventType: "taxation",
           location: {},
@@ -240,6 +240,27 @@ export function updatePolitics(state: WorldState, ledger: CausalLedger, year: nu
           summaryArguments: { govName: gov.name, taxCollected },
           confidence: 1.0,
         });
+
+        for (const item of taxReductions) {
+          ledger.addEvent({
+            eventId: `wealth_change_${item.s.id}_tax_${year}`,
+            time: { year },
+            eventType: "settlement_wealth_changed",
+            location: { cellId: item.s.cellId, settlementId: item.s.id },
+            actorIds: [item.s.id],
+            affectedEntityIds: [item.s.id],
+            conditions: [],
+            immediateEffects: [
+              { entityId: item.s.id, component: "settlements", field: "wealth", before: item.beforeWealth, after: item.s.wealth }
+            ],
+            parentEventIds: [taxEventId],
+            resultingEventIds: [],
+            ruleId: "tax_wealth_reduction",
+            summaryTemplate: "Wealth of {name} reduced by {delta} due to tax collection.",
+            summaryArguments: { name: item.s.name, delta: item.tax.toFixed(0) },
+            confidence: 1.0,
+          });
+        }
       }
     }
   }

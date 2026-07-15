@@ -355,20 +355,27 @@ export const Inspector: React.FC<InspectorProps> = ({
               )}
 
               <div className="flex flex-col gap-3 relative before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-[1px] before:bg-white/10">
-                {stateB && causalTrace.path.length > 0 ? (
+                {stateB && causalTrace.status === "verified_causal_path" ? (
                   causalTrace.path.map((step, i) => (
                     <div key={i} className="flex gap-3 text-xs pl-1">
                       <div className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px] font-bold z-10 border bg-indigo-500/20 border-indigo-400 text-indigo-300">
                         {i + 1}
                       </div>
                       <div className="flex-1 flex flex-col gap-0.5">
-                        {step.refId && (
-                          <span className="text-[9px] text-slate-500 font-mono tracking-wider">Ref: {step.refId}</span>
-                        )}
-                        <span className="text-slate-300">{step.text}</span>
+                        <span className="text-[9px] text-slate-500 font-mono tracking-wider">Event ID: {step.eventId} (Year {step.year})</span>
+                        <span className="text-[9px] text-indigo-400 uppercase font-semibold">{step.eventType}</span>
+                        <span className="text-slate-300">{step.summary}</span>
                       </div>
                     </div>
                   ))
+                ) : stateB && causalTrace.status === "unresolved_ancestry" ? (
+                  <div className="flex flex-col gap-2 text-xs text-amber-400 bg-amber-500/10 p-2.5 rounded border border-amber-500/20 z-10">
+                    <span className="font-semibold">Unresolved Ancestry:</span>
+                    <span>Entity ID '{selectedEntityId}' has different values, but no continuous chain of event links connects it to the intervention.</span>
+                    {causalTrace.missingEventIds.length > 0 && (
+                      <span>Missing Event IDs: {causalTrace.missingEventIds.join(", ")}</span>
+                    )}
+                  </div>
                 ) : (
                   explanation.causes.map((c, i) => (
                     <div key={i} className="flex gap-3 text-xs pl-1">

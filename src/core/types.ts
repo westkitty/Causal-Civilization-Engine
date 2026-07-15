@@ -85,6 +85,14 @@ export interface HistoricalEvent {
   confidence: number;
 }
 
+export interface ResolvedTransportPath {
+  edgeIds: string[];
+  totalTravelTime: number;
+  residualCapacity: number;
+  crossingAssetIds: string[];
+  mode: "network" | "off_network";
+}
+
 export interface Cohort {
   culture: string;
   occupation: string;
