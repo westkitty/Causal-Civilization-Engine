@@ -1,5 +1,146 @@
-import type { WorldState, HistoricalEvent } from "./types";
+import type { WorldState, HistoricalEvent, ConditionEvidence, StateDelta } from "./types";
 import { CausalLedger } from "../timelines/ledger";
+
+// ---------------------------------------------------------------------------
+// Semantic cross-branch event correlation
+//
+// Corresponding events across two timelines must NOT be identified by a mutable
+// global transaction counter. `correlationKey` carries a deterministic,
+// order-independent semantic identity (year, seller, buyer, good, side,
+// pair-scoped ordinal for trades). Events whose raw eventId is already stable
+// (bridges, roads, founding, tax, …) fall back to the eventId.
+// ---------------------------------------------------------------------------
+
+export function getEventCorrelationKey(event: HistoricalEvent): string {
+  return event.correlationKey ?? event.eventId;
+}
+
+export function buildCorrelationIndex(ledger: CausalLedger): Map<string, HistoricalEvent> {
+  const index = new Map<string, HistoricalEvent>();
+  for (const ev of ledger.getAllEvents()) {
+    // First writer wins for determinism (getAllEvents is year- then
+    // insertion-ordered). Keys are unique in practice.
+    const key = getEventCorrelationKey(ev);
+    if (!index.has(key)) index.set(key, ev);
+  }
+  return index;
+}
+
+export function findCorrelatedEvent(
+  ledger: CausalLedger,
+  event: HistoricalEvent
+): HistoricalEvent | undefined {
+  const wanted = getEventCorrelationKey(event);
+  for (const ev of ledger.getAllEvents()) {
+    if (getEventCorrelationKey(ev) === wanted) return ev;
+  }
+  return undefined;
+}
+
+// Aggregates the semantic trade mechanism between a seller/buyer for a good in a
+// given year (total volume, weighted unit price, total transport expense),
+// independent of how many discrete allocations or in what order they occurred.
+export function aggregateTradeMechanism(
+  ledger: CausalLedger,
+  year: number,
+  sellerId: string,
+  buyerId: string,
+  good: string
+): { totalVolume: number; weightedPrice: number; transportExpense: number; allocations: number } {
+  let totalVolume = 0;
+  let priceVolume = 0;
+  let transportExpense = 0;
+  let allocations = 0;
+  for (const ev of ledger.getAllEvents()) {
+    if (ev.eventType !== "trade_allocation" || ev.time.year !== year) continue;
+    if (ev.actorIds[0] !== sellerId || ev.actorIds[1] !== buyerId) continue;
+    const argGood = ev.summaryArguments?.good;
+    if (argGood !== undefined && argGood !== good) continue;
+    const cond = ev.conditions[0];
+    if (!cond) continue;
+    const vol = cond.observed.find(o => o.name === "volume")?.value ?? 0;
+    const price = cond.observed.find(o => o.name === "unitPrice")?.value ?? 0;
+    const expense = cond.observed.find(o => o.name === "transportExpense")?.value ?? 0;
+    totalVolume += vol;
+    priceVolume += vol * price;
+    transportExpense += expense;
+    allocations += 1;
+  }
+  return {
+    totalVolume,
+    weightedPrice: totalVolume > 0 ? priceVolume / totalVolume : 0,
+    transportExpense,
+    allocations,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Symmetric, order-independent event comparison
+// ---------------------------------------------------------------------------
+
+function sortedJoin(arr: string[]): string {
+  return [...arr].sort().join(",");
+}
+
+// Canonical signature of a condition. Excludes `conditionId` because it embeds
+// branch-specific event ids; includes every semantic attribute plus sorted
+// observations (name, value, unit, baseline, threshold).
+function conditionSignature(c: ConditionEvidence): string {
+  const obs = [...c.observed]
+    .map(o => `${o.name}=${o.value}|u:${o.unit ?? ""}|b:${o.baseline ?? ""}|t:${o.threshold ?? ""}`)
+    .sort()
+    .join(";");
+  return `${c.predicateType}|res:${c.result}|role:${c.role}|src:${c.sourceSystem}|unc:${c.uncertainty}|obs:[${obs}]`;
+}
+
+// Compares the multiset of conditions symmetrically (a condition present on
+// only one side, an extra observation, or a repeated predicate type all change
+// the multiset and are detected).
+function conditionsDiffer(condsA: ConditionEvidence[], condsB: ConditionEvidence[]): boolean {
+  const sigA = condsA.map(conditionSignature).sort();
+  const sigB = condsB.map(conditionSignature).sort();
+  if (sigA.length !== sigB.length) return true;
+  for (let i = 0; i < sigA.length; i++) {
+    if (sigA[i] !== sigB[i]) return true;
+  }
+  return false;
+}
+
+// Compares ALL immediate effects that touch the focal (entityId, field).
+// Numeric effects compare normalized deltas (after - before); non-numeric
+// effects compare canonical before->after values. Multiset semantics.
+function effectsDiffer(
+  effsA: StateDelta[],
+  effsB: StateDelta[]
+): boolean {
+  const numA: number[] = [];
+  const strA: string[] = [];
+  const numB: number[] = [];
+  const strB: string[] = [];
+  const bucket = (effs: StateDelta[], nums: number[], strs: string[]) => {
+    for (const e of effs) {
+      if (typeof e.before === "number" && typeof e.after === "number") {
+        nums.push(e.after - e.before);
+      } else {
+        strs.push(`${JSON.stringify(e.before)}->${JSON.stringify(e.after)}`);
+      }
+    }
+  };
+  bucket(effsA, numA, strA);
+  bucket(effsB, numB, strB);
+  if (numA.length !== numB.length || strA.length !== strB.length) return true;
+  numA.sort((a, b) => a - b);
+  numB.sort((a, b) => a - b);
+  for (let i = 0; i < numA.length; i++) {
+    if (Math.abs(numA[i] - numB[i]) > 1e-9) return true;
+  }
+  strA.sort();
+  strB.sort();
+  for (let i = 0; i < strA.length; i++) {
+    if (strA[i] !== strB[i]) return true;
+  }
+  return false;
+}
 
 export interface CausalChainStep {
   eventId: string;
@@ -33,7 +174,11 @@ export interface CausalAncestryResult {
   }>;
 }
 
-function eventsDiffer(
+// Returns true when the counterfactual event `evB` differs from its correlated
+// baseline event `evA` in any causally-relevant way. All comparisons are
+// symmetric and order-independent; a difference on either side is detected.
+// Exported for adversarial testing.
+export function eventsDiffer(
   evB: HistoricalEvent,
   evA: HistoricalEvent,
   entityId: string,
@@ -42,51 +187,34 @@ function eventsDiffer(
 ): boolean {
   if (evB.ruleId !== evA.ruleId) return true;
   if (evB.eventType !== evA.eventType) return true;
+  if (evB.time.year !== evA.time.year) return true;
 
+  // Set-like arrays: compare as sorted copies (order is not semantic). The
+  // intervention id is excluded from parents so that merely inserting the
+  // intervention does not by itself register as a divergence.
   const parentsB = evB.parentEventIds.filter(id => id !== interventionEventId);
   const parentsA = evA.parentEventIds.filter(id => id !== interventionEventId);
-  if (parentsB.join(",") !== parentsA.join(",")) return true;
+  if (sortedJoin(parentsB) !== sortedJoin(parentsA)) return true;
+  if (sortedJoin(evB.actorIds) !== sortedJoin(evA.actorIds)) return true;
+  if (sortedJoin(evB.affectedEntityIds) !== sortedJoin(evA.affectedEntityIds)) return true;
 
-  // Compare location
+  // Location.
   if (evB.location.cellId !== evA.location.cellId ||
       evB.location.routeEdgeId !== evA.location.routeEdgeId ||
       evB.location.settlementId !== evA.location.settlementId) {
     return true;
   }
 
-  // Compare actors & affected entities
-  if (evB.actorIds.join(",") !== evA.actorIds.join(",")) return true;
-  if (evB.affectedEntityIds.join(",") !== evA.affectedEntityIds.join(",")) return true;
+  // All immediate effects on the focal (entityId, field), by normalized delta.
+  const effsB = evB.immediateEffects.filter(eff => eff.entityId === entityId && eff.field === field);
+  const effsA = evA.immediateEffects.filter(eff => eff.entityId === entityId && eff.field === field);
+  if (effectsDiffer(effsA, effsB)) return true;
 
-  // Compare immediateEffects
-  const effB = evB.immediateEffects.find(eff => eff.entityId === entityId && eff.field === field);
-  const effA = evA.immediateEffects.find(eff => eff.entityId === entityId && eff.field === field);
-  if (effB || effA) {
-    if (!effB || !effA) return true;
-    if (typeof effB.before === "number" && typeof effB.after === "number" &&
-        typeof effA.before === "number" && typeof effA.after === "number") {
-      const deltaB = effB.after - effB.before;
-      const deltaA = effA.after - effA.before;
-      if (Math.abs(deltaB - deltaA) > 1e-6) return true;
-    } else {
-      if (effB.before !== effA.before || effB.after !== effA.after) return true;
-    }
-  }
+  // Conditions (mechanism inputs), compared symmetrically as a multiset.
+  if (conditionsDiffer(evA.conditions, evB.conditions)) return true;
 
-  // Compare conditions (mechanism inputs)
-  for (const condB of evB.conditions) {
-    const condA = evA.conditions.find(c => c.predicateType === condB.predicateType) ||
-                  evA.conditions.find(c => c.conditionId === condB.conditionId);
-    if (!condA) return true;
-
-    for (const obsB of condB.observed) {
-      const obsA = condA.observed.find(o => o.name === obsB.name);
-      if (!obsA) return true;
-      if (Math.abs(obsB.value - obsA.value) > 1e-6) return true;
-    }
-  }
-
-  // Compare summaryArguments
+  // Summary arguments (secondary signal — includes the transport path
+  // signature). Compared symmetrically over the key union.
   const allKeys = new Set([...Object.keys(evB.summaryArguments || {}), ...Object.keys(evA.summaryArguments || {})]);
   for (const key of allKeys) {
     const valB = evB.summaryArguments?.[key];
@@ -189,12 +317,20 @@ export function traceCausalAncestry(
     e.immediateEffects.some(eff => eff.entityId === entityId && eff.field === field)
   );
 
-  // Filter to keep only branch-specific or quantitatively different ones compared to ledgerA
+  // Correlate each candidate to its baseline counterpart by SEMANTIC identity
+  // (correlationKey, not raw eventId) so unrelated transaction ordering cannot
+  // spoof a divergence. Keep only events with no baseline counterpart or a
+  // genuinely different mechanism.
+  const baselineIndex = buildCorrelationIndex(ledgerA);
   focalEvents = focalEvents.filter(evB => {
-    const evA = ledgerA.getEvent(evB.eventId);
+    const evA = baselineIndex.get(getEventCorrelationKey(evB));
     if (!evA) return true;
     return eventsDiffer(evB, evA, entityId, field, interventionEventId);
   });
+
+  // Deterministic focal ordering (year, then eventId) so path selection and BFS
+  // seeding are reproducible regardless of ledger insertion order.
+  focalEvents.sort((a, b) => a.time.year - b.time.year || a.eventId.localeCompare(b.eventId));
 
   // Fallback for suppressed entities
   if (focalEvents.length === 0 && hasEntityA && !hasEntityB) {

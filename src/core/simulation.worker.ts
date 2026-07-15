@@ -45,49 +45,32 @@ self.onmessage = (e: MessageEvent) => {
       // Reconstruct parent branch state and ledger
       const parentBranch = new Branch(parentBranchId);
       const parentLedger = new CausalLedger(parentBranchId);
-      
+
       // We need to restore snapshots from parent
-      const { parentSnapshots, parentYearHashes } = e.data;
+      const { parentSnapshots, parentYearHashes, parentCachedStates } = e.data;
       parentBranch.snapshots = parentSnapshots;
       parentBranch.yearHashes = parentYearHashes;
 
-      const { branch: subBranch, ledger: subLedger } = resimulateBranch(
+      // Simulate the branch EXACTLY ONCE. resimulateBranch records every year's
+      // state and reports progress; re-simulating here would duplicate ledger
+      // events and throw.
+      const { branch: subBranch, ledger: subLedger, cachedStates } = resimulateBranch(
         parentBranch,
         parentLedger,
         intervention,
-        endYear
-      );
-
-      // Now cache and simulate all states for the new branch
-      const cachedStates: Record<number, any> = {};
-      const insertionYear = intervention.insertionYear;
-
-      // Copy identical prefix states from parent snapshots or restore them
-      // Since it's identical before insertionYear, we can copy parentStates
-      const { parentCachedStates } = e.data;
-      for (let y = 0; y < insertionYear; y++) {
-        cachedStates[y] = parentCachedStates[y];
-      }
-
-      // Simulate forward from insertionYear
-      // Get state at insertionYear - 1
-      const startState = cloneState(parentCachedStates[insertionYear - 1]);
-      startState.year = insertionYear - 1;
-
-      // Run simulation year-by-year from insertionYear
-      for (let y = insertionYear; y <= endYear; y++) {
-        simulateYear(startState, subLedger, subBranch, y);
-        cachedStates[y] = cloneState(startState);
-
-        if (y % 10 === 0 || y === endYear) {
-          self.postMessage({
-            type: "PROGRESS",
-            requestId,
-            completedYear: y,
-            endYear,
-          });
+        endYear,
+        {
+          parentCachedStates,
+          onProgress: (completedYear, total) => {
+            self.postMessage({
+              type: "PROGRESS",
+              requestId,
+              completedYear,
+              endYear: total,
+            });
+          },
         }
-      }
+      );
 
       self.postMessage({
         type: "COMPLETE",

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { WorldState } from "./core/types";
 import { Branch } from "./timelines/branch";
 import type { TimelineIntervention } from "./timelines/branch";
@@ -10,6 +10,8 @@ import { Inspector } from "./ui/Inspector";
 import { GitFork, Activity } from "lucide-react";
 import { simulateYear } from "./core/scheduler";
 import { generateWorld } from "./geography/terrain";
+import { resimulateBranch } from "./core/runner";
+import { acceptResult } from "./core/requestGuard";
 
 const spawnWorker = () => {
   if (typeof Worker !== "undefined") {
@@ -38,55 +40,73 @@ function App() {
   const [hasSecondBranch, setHasSecondBranch] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulatedProgress, setSimulatedProgress] = useState(0);
+  const [simulationError, setSimulationError] = useState<string | null>(null);
+
+  // Worker lifecycle guards: only the latest request may commit results, prior
+  // workers are terminated, and no state is written after unmount.
+  const activeWorkerRef = useRef<Worker | null>(null);
+  const latestRequestIdRef = useRef(0);
+  const mountedRef = useRef(true);
 
   // Playback timer Ref
   const playTimerRef = useRef<any>(null);
 
   // 1. Initialize Full Simulation for Parent Branch
-  const runSimulationA = () => {
+  const runSimulationA = useCallback(() => {
+    // Supersede any in-flight run: bump the request id and kill the old worker.
+    const requestId = ++latestRequestIdRef.current;
+    if (activeWorkerRef.current) {
+      activeWorkerRef.current.terminate();
+      activeWorkerRef.current = null;
+    }
+
     setIsSimulating(true);
     setSimulatedProgress(0);
+    setSimulationError(null);
+
+    const commitBaseline = (result: any) => {
+      statesListARef.current = result.cachedStates;
+
+      const tempBranch = new Branch("main");
+      tempBranch.yearHashes = result.yearHashes;
+      tempBranch.snapshots = result.snapshots;
+
+      const tempLedger = new CausalLedger("main");
+      tempLedger.events = result.events;
+
+      branchARef.current = tempBranch;
+      ledgerARef.current = tempLedger;
+
+      statesListBRef.current = {};
+      branchBRef.current = undefined;
+      ledgerBRef.current = undefined;
+      setHasSecondBranch(false);
+      setComparisonMode("none");
+      setCurrentYear(0);
+      setIsSimulating(false);
+    };
 
     const worker = spawnWorker();
     if (worker) {
-      const requestId = Math.random().toString(36).substring(7);
-      worker.postMessage({
-        type: "RUN_BASELINE",
-        requestId,
-        seed,
-        endYear: 400,
-      });
+      activeWorkerRef.current = worker;
+      worker.postMessage({ type: "RUN_BASELINE", requestId, seed, endYear: 400 });
 
       worker.onmessage = (e) => {
+        // Reject stale/superseded responses and post-unmount writes.
+        if (!acceptResult(latestRequestIdRef.current, e.data.requestId, mountedRef.current)) return;
         const { type, completedYear, endYear, result, message } = e.data;
         if (type === "PROGRESS") {
           setSimulatedProgress(Math.round((completedYear / endYear) * 100));
         } else if (type === "COMPLETE") {
-          statesListARef.current = result.cachedStates;
-          
-          const tempBranch = new Branch("main");
-          tempBranch.yearHashes = result.yearHashes;
-          tempBranch.snapshots = result.snapshots;
-
-          const tempLedger = new CausalLedger("main");
-          tempLedger.events = result.events;
-
-          branchARef.current = tempBranch;
-          ledgerARef.current = tempLedger;
-
-          statesListBRef.current = {};
-          branchBRef.current = undefined;
-          ledgerBRef.current = undefined;
-          setHasSecondBranch(false);
-          setComparisonMode("none");
-
-          setCurrentYear(0);
-          setIsSimulating(false);
+          commitBaseline(result);
           worker.terminate();
+          if (activeWorkerRef.current === worker) activeWorkerRef.current = null;
         } else if (type === "ERROR") {
           console.error("Worker error during baseline:", message);
+          setSimulationError(`Baseline simulation failed: ${message}`);
           setIsSimulating(false);
           worker.terminate();
+          if (activeWorkerRef.current === worker) activeWorkerRef.current = null;
         }
       };
     } else {
@@ -94,7 +114,7 @@ function App() {
       const tempBranch = new Branch("main");
       const tempLedger = new CausalLedger("main");
       const tempState = generateWorld(seed, 125, 125);
-      
+
       simulateYear(tempState, tempLedger, tempBranch, 0);
       const cachedStates: Record<number, WorldState> = { 0: structuredClone(tempState) };
 
@@ -102,25 +122,32 @@ function App() {
         simulateYear(tempState, tempLedger, tempBranch, y);
         cachedStates[y] = structuredClone(tempState);
       }
-      
-      branchARef.current = tempBranch;
-      ledgerARef.current = tempLedger;
-      statesListARef.current = cachedStates;
 
-      statesListBRef.current = {};
-      branchBRef.current = undefined;
-      ledgerBRef.current = undefined;
-      setHasSecondBranch(false);
-      setComparisonMode("none");
-
-      setCurrentYear(0);
-      setIsSimulating(false);
+      if (!acceptResult(latestRequestIdRef.current, requestId, mountedRef.current)) return;
+      commitBaseline({
+        cachedStates,
+        yearHashes: tempBranch.yearHashes,
+        events: tempLedger.events,
+        snapshots: tempBranch.snapshots,
+      });
     }
-  };
+  }, [seed]);
 
   useEffect(() => {
     runSimulationA();
-  }, [seed]);
+  }, [runSimulationA]);
+
+  // Terminate any active worker and block post-unmount writes on teardown.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (activeWorkerRef.current) {
+        activeWorkerRef.current.terminate();
+        activeWorkerRef.current = null;
+      }
+    };
+  }, []);
 
   // 2. Playback logic
   useEffect(() => {
@@ -143,25 +170,69 @@ function App() {
     };
   }, [isPlaying]);
 
+  // Find the earliest active bridge in the cached baseline so the intervention
+  // targets the actual emergent bridge id (not a hard-coded id that only fits
+  // one seed).
+  const findTargetBridgeId = (): string | null => {
+    const states = statesListARef.current;
+    const years = Object.keys(states).map(Number).sort((a, b) => a - b);
+    for (const y of years) {
+      const bridge = Object.values(states[y].bridges).find(b => b.status === "active");
+      if (bridge) return bridge.id;
+    }
+    return null;
+  };
+
   // 3. Trigger Bridge Suppression Counterfactual Intervention
   const triggerIntervention = () => {
     if (isSimulating) return;
-    setIsSimulating(true);
-    setSimulatedProgress(0);
+
+    const targetBridgeId = findTargetBridgeId();
+    if (!targetBridgeId) {
+      setSimulationError("No bridge available to suppress in the baseline timeline.");
+      return;
+    }
 
     const intervention: TimelineIntervention = {
       interventionId: "interv_suppress_bridge_10",
       parentBranchId: "main",
       newBranchId: "suppress_bridge_branch",
       insertionYear: 10,
-      targetIds: ["bridge_6428"],
+      targetIds: [targetBridgeId],
       operation: "suppress_event",
       parameters: {},
     };
 
+    const requestId = ++latestRequestIdRef.current;
+    if (activeWorkerRef.current) {
+      activeWorkerRef.current.terminate();
+      activeWorkerRef.current = null;
+    }
+    setIsSimulating(true);
+    setSimulatedProgress(0);
+    setSimulationError(null);
+
+    const commitBranch = (result: any) => {
+      const subBranch = new Branch("suppress_bridge_branch", "main", intervention);
+      subBranch.yearHashes = result.yearHashes;
+      subBranch.snapshots = result.snapshots;
+
+      const subLedger = new CausalLedger("suppress_bridge_branch");
+      subLedger.events = result.events;
+
+      statesListBRef.current = result.cachedStates;
+      branchBRef.current = subBranch;
+      ledgerBRef.current = subLedger;
+
+      setHasSecondBranch(true);
+      setComparisonMode("swipe");
+      setCurrentYear(10);
+      setIsSimulating(false);
+    };
+
     const worker = spawnWorker();
     if (worker) {
-      const requestId = Math.random().toString(36).substring(7);
+      activeWorkerRef.current = worker;
       worker.postMessage({
         type: "RUN_BRANCH",
         requestId,
@@ -174,80 +245,40 @@ function App() {
       });
 
       worker.onmessage = (e) => {
+        if (!acceptResult(latestRequestIdRef.current, e.data.requestId, mountedRef.current)) return;
         const { type, completedYear, endYear, result, message } = e.data;
         if (type === "PROGRESS") {
           setSimulatedProgress(Math.round((completedYear / endYear) * 100));
         } else if (type === "COMPLETE") {
-          const subBranch = new Branch("suppress_bridge_branch", "main", intervention);
-          subBranch.yearHashes = result.yearHashes;
-          subBranch.snapshots = result.snapshots;
-
-          const subLedger = new CausalLedger("suppress_bridge_branch");
-          subLedger.events = result.events;
-
-          statesListBRef.current = result.cachedStates;
-          branchBRef.current = subBranch;
-          ledgerBRef.current = subLedger;
-
-          setHasSecondBranch(true);
-          setComparisonMode("swipe");
-          setCurrentYear(10);
-          setIsSimulating(false);
+          commitBranch(result);
           worker.terminate();
+          if (activeWorkerRef.current === worker) activeWorkerRef.current = null;
         } else if (type === "ERROR") {
           console.error("Worker error during branch resimulation:", message);
+          setSimulationError(`Counterfactual resimulation failed: ${message}`);
           setIsSimulating(false);
           worker.terminate();
+          if (activeWorkerRef.current === worker) activeWorkerRef.current = null;
         }
       };
     } else {
-      // Fallback to synchronous simulation
-      const subBranch = new Branch("suppress_bridge_branch", "main", intervention);
-      const subLedger = new CausalLedger("suppress_bridge_branch");
+      // Fallback to synchronous simulation (Node / Vitest / E2E context).
+      const parentBranch = branchARef.current;
+      const { ledger: subLedger, branch: subBranch, cachedStates } = resimulateBranch(
+        parentBranch,
+        ledgerARef.current,
+        intervention,
+        400,
+        { parentCachedStates: statesListARef.current }
+      );
 
-      const snapshot = branchARef.current.snapshots[0];
-      const state = structuredClone(snapshot.state);
-
-      for (const evId of Object.keys(snapshot.ledgerEvents)) {
-        subLedger.addEvent(snapshot.ledgerEvents[evId]);
-      }
-
-      const cachedStatesB: Record<number, WorldState> = {};
-      for (let y = 0; y < 10; y++) {
-        cachedStatesB[y] = structuredClone(statesListARef.current[y]);
-        subBranch.recordYearHash(y, branchARef.current.yearHashes[y]);
-      }
-
-      subLedger.addEvent({
-        eventId: intervention.interventionId,
-        time: { year: 10 },
-        eventType: "timeline_intervention",
-        location: {},
-        actorIds: [],
-        affectedEntityIds: ["bridge_6428"],
-        conditions: [],
-        immediateEffects: [],
-        parentEventIds: [],
-        resultingEventIds: [],
-        ruleId: "user_intervention",
-        summaryTemplate: "Timeline branch created: Suppress bridge construction at Year 10.",
-        summaryArguments: { operation: "suppress_event" },
-        confidence: 1.0,
+      if (!acceptResult(latestRequestIdRef.current, requestId, mountedRef.current)) return;
+      commitBranch({
+        cachedStates,
+        yearHashes: subBranch.yearHashes,
+        events: subLedger.events,
+        snapshots: subBranch.snapshots,
       });
-
-      for (let y = 10; y <= 400; y++) {
-        simulateYear(state, subLedger, subBranch, y);
-        cachedStatesB[y] = structuredClone(state);
-      }
-
-      statesListBRef.current = cachedStatesB;
-      branchBRef.current = subBranch;
-      ledgerBRef.current = subLedger;
-
-      setHasSecondBranch(true);
-      setComparisonMode("swipe");
-      setCurrentYear(10);
-      setIsSimulating(false);
     }
   };
 
@@ -348,6 +379,15 @@ function App() {
           <div className="loader-spin" />
           <span className="text-sm font-semibold text-cyan-300 tracking-wider">Recompiling Causal History...</span>
           <span className="text-xs text-slate-400 font-mono">Progress: {simulatedProgress}%</span>
+        </div>
+      )}
+
+      {simulationError && (
+        <div
+          role="alert"
+          className="absolute bottom-28 left-1/2 -translate-x-1/2 z-40 bg-red-950/90 border border-red-500/40 text-red-200 text-xs font-mono px-4 py-2 rounded-xl shadow-lg"
+        >
+          {simulationError}
         </div>
       )}
     </div>

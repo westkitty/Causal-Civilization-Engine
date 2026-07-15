@@ -83,6 +83,10 @@ export interface HistoricalEvent {
   summaryTemplate: string;
   summaryArguments: Record<string, string | number>;
   confidence: number;
+  // Deterministic, branch-independent semantic identity used to correlate the
+  // "same" event across timelines. Independent of unrelated transaction
+  // ordering. Absent for events whose raw eventId is already stable.
+  correlationKey?: string;
 }
 
 export interface ResolvedTransportPath {
@@ -91,6 +95,13 @@ export interface ResolvedTransportPath {
   residualCapacity: number;
   crossingAssetIds: string[];
   mode: "network" | "off_network";
+  // Direction-independent capacity identities consumed by this path. For network
+  // paths these are the route edge IDs; for off-network paths this is a single
+  // stable `offnet:<loId>:<hiId>:<corridorHash>` key shared in both directions.
+  capacityKeys: string[];
+  // Deterministic signature of the resolved corridor (mode + ordered edges +
+  // sorted crossing assets), surfaced into trade ledger evidence.
+  pathSignature: string;
 }
 
 export interface Cohort {

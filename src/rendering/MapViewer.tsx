@@ -39,6 +39,20 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   // Maps display objects to entity IDs
   const objectToEntityMapRef = useRef<Map<string, string>>(new Map());
 
+  // Transient view state is read through refs inside the persistent render loop
+  // and click handler so that changing it does NOT tear down and recreate the
+  // renderer, camera, or animation loop (which would reset the camera).
+  const comparisonModeRef = useRef(comparisonMode);
+  const swipePositionRef = useRef(swipePosition);
+  const stateBRef = useRef(stateB);
+  const onSelectEntityRef = useRef(onSelectEntity);
+  useEffect(() => {
+    comparisonModeRef.current = comparisonMode;
+    swipePositionRef.current = swipePosition;
+    stateBRef.current = stateB;
+    onSelectEntityRef.current = onSelectEntity;
+  });
+
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -125,14 +139,14 @@ export const MapViewer: React.FC<MapViewerProps> = ({
       mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
       raycaster.setFromCamera(mouse, cameraRef.current);
-      
-      // Raycast against active scene
-      const pickables = comparisonMode === "swipe" && event.clientX - rect.left > rect.width * (swipePosition / 100)
+
+      // Raycast against active scene (current view state read from refs).
+      const pickables = comparisonModeRef.current === "swipe" && event.clientX - rect.left > rect.width * (swipePositionRef.current / 100)
         ? pickableObjectsBRef.current
         : pickableObjectsARef.current;
 
       const intersects = raycaster.intersectObjects(pickables, true);
-      
+
       if (intersects.length > 0) {
         // Find entity ID in hierarchy
         let obj: THREE.Object3D | null = intersects[0].object;
@@ -142,9 +156,9 @@ export const MapViewer: React.FC<MapViewerProps> = ({
           if (id) break;
           obj = obj.parent;
         }
-        onSelectEntity(id);
+        onSelectEntityRef.current(id);
       } else {
-        onSelectEntity(null);
+        onSelectEntityRef.current(null);
       }
     };
 
@@ -167,13 +181,13 @@ export const MapViewer: React.FC<MapViewerProps> = ({
       const sB = sceneBRef.current;
 
       if (r && cam && sA && sB) {
-        if (frameCount % 300 === 0) {
+        if (import.meta.env.DEV && frameCount % 300 === 0) {
           console.log(`[PERF DIAGNOSTICS] Draw Calls: ${r.info.render.calls}, Triangles: ${r.info.render.triangles}, Geometries: ${r.info.memory.geometries}, Textures: ${r.info.memory.textures}`);
         }
-        if (comparisonMode === "swipe" && stateB) {
+        if (comparisonModeRef.current === "swipe" && stateBRef.current) {
           const w = containerRef.current?.clientWidth || window.innerWidth;
           const h = containerRef.current?.clientHeight || window.innerHeight;
-          const swipeX = w * (swipePosition / 100);
+          const swipeX = w * (swipePositionRef.current / 100);
 
           // Render Left side (Scene A)
           r.setScissorTest(true);
@@ -202,7 +216,9 @@ export const MapViewer: React.FC<MapViewerProps> = ({
       }
       cancelAnimationFrame(animationFrameId);
     };
-  }, [comparisonMode, swipePosition, onSelectEntity, stateB]);
+    // Mount-once: the renderer, camera, controls, and animation loop persist for
+    // the component's lifetime. Transient view state is read via refs above.
+  }, []);
 
   // 7. Update scenes when state changes
   useEffect(() => {

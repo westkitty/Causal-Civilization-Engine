@@ -1,9 +1,37 @@
 import type { WorldState, ResolvedTransportPath, HistoricalEvent } from "../core/types";
 import { CausalLedger } from "../timelines/ledger";
 import { findShortestPath } from "./transport";
+import { fnv1a64 } from "../core/hashing";
+
+// Annual throughput ceiling for a single off-network corridor. Off-network
+// traffic is far more expensive/slower than a road, so its yearly volume is
+// bounded and this limit is consumed (not reset) within a simulation year.
+export const OFFNET_ANNUAL_CAPACITY = 10;
 
 function isRiverCell(state: WorldState, idx: number): boolean {
   return state.flowAccumulation[idx] > 500;
+}
+
+// Deterministic signature of a resolved corridor. Ordered edges matter (route
+// direction of travel); crossing assets are order-independent so they are
+// sorted. Surfaced into trade ledger evidence for cross-branch comparison.
+export function buildTransportPathSignature(
+  mode: "network" | "off_network",
+  edgeIds: string[],
+  capacityKeys: string[],
+  crossingAssetIds: string[]
+): string {
+  const crossings = [...crossingAssetIds].sort().join(",");
+  const keys = [...capacityKeys].sort().join(",");
+  return `${mode}|edges:${edgeIds.join(">")}|caps:${keys}|cross:${crossings}`;
+}
+
+// Derive the annual capacity limit for a capacity key. Off-network keys share a
+// single fixed annual ceiling; network keys resolve to their route capacity.
+export function capacityLimitForKey(state: WorldState, key: string): number {
+  if (key.startsWith("offnet:")) return OFFNET_ANNUAL_CAPACITY;
+  const route = state.routes[key];
+  return route ? route.capacity : 0;
 }
 
 export function findEligibleInfrastructureEvent(
@@ -30,11 +58,20 @@ export function findInfrastructureEvent(
   return findEligibleInfrastructureEvent(events, eventType, entityId, maxYear);
 }
 
+// Cached off-network corridor geometry for one unordered settlement pair within
+// a single simulation year (computed once, in canonical direction).
+interface OffnetGeometry {
+  totalTravelTime: number;
+  crossingAssetIds: string[];
+  capacityKey: string;
+}
+
 export function resolveTransportPath(
   state: WorldState,
   sellerId: string,
   buyerId: string,
-  usedCapacity?: Record<string, number>
+  usedCapacity?: Record<string, number>,
+  offnetCache?: Map<string, OffnetGeometry | null>
 ): ResolvedTransportPath | null {
   const width = state.mapWidth;
   const seller = state.settlements[sellerId];
@@ -147,41 +184,78 @@ export function resolveTransportPath(
       }
     }
 
+    const capacityKeys = [...edgeIds];
     return {
       edgeIds,
       totalTravelTime,
       residualCapacity: minCapacity,
       crossingAssetIds,
       mode: "network",
+      capacityKeys,
+      pathSignature: buildTransportPathSignature("network", edgeIds, capacityKeys, crossingAssetIds),
     };
   }
 
-  // 2. Off-network fallback (check Euclidean limit first to optimize CPU)
-  const sCell = seller.cellId;
-  const bCell = buyer.cellId;
+  // 2. Off-network fallback. The corridor is direction-independent: it is
+  // resolved once, in a canonical direction (lower settlement id -> higher), so
+  // both directions share the same cost AND the same annual capacity budget.
+  // The geometry is memoized per unordered pair for the whole year (only the
+  // residual, which depends on usedCapacity, is recomputed each call).
+  const loId = sellerId < buyerId ? sellerId : buyerId;
+  const hiId = sellerId < buyerId ? buyerId : sellerId;
+  const pairKey = `${loId}:${hiId}`;
+
+  let geom = offnetCache?.get(pairKey);
+  if (geom === undefined) {
+    geom = computeOffnetGeometry(state, loId, hiId);
+    offnetCache?.set(pairKey, geom);
+  }
+  if (geom === null) return null;
+
+  const usedOffnet = usedCapacity ? (usedCapacity[geom.capacityKey] || 0) : 0;
+  const residual = Math.max(0, OFFNET_ANNUAL_CAPACITY - usedOffnet);
+  const capacityKeys = [geom.capacityKey];
+  return {
+    edgeIds: [],
+    totalTravelTime: geom.totalTravelTime,
+    residualCapacity: residual,
+    crossingAssetIds: geom.crossingAssetIds,
+    mode: "off_network",
+    capacityKeys,
+    pathSignature: buildTransportPathSignature("off_network", [], capacityKeys, geom.crossingAssetIds),
+  };
+}
+
+// Resolves the canonical off-network corridor between two settlements (from the
+// lower id to the higher id) and its cost, crossing assets, and capacity key.
+// Returns null if the corridor is out of range or unreachable.
+function computeOffnetGeometry(
+  state: WorldState,
+  loId: string,
+  hiId: string
+): OffnetGeometry | null {
+  const width = state.mapWidth;
+  const loCell = state.settlements[loId].cellId;
+  const hiCell = state.settlements[hiId].cellId;
+
   const distCells = Math.hypot(
-    (sCell % width) - (bCell % width),
-    Math.floor(sCell / width) - Math.floor(bCell / width)
+    (loCell % width) - (hiCell % width),
+    Math.floor(loCell / width) - Math.floor(hiCell / width)
   );
   if (distCells > 25) return null;
 
-  const cellPath = findShortestPath(state, sCell, bCell, true);
+  const cellPath = findShortestPath(state, loCell, hiCell, true);
   if (cellPath.length === 0) return null;
-
-  // Calculate off-network cumulative cost
-  let totalTime = 0;
-  const crossingAssetIds: string[] = [];
 
   const getX = (idx: number) => idx % width;
   const getY = (idx: number) => Math.floor(idx / width);
 
+  let totalTime = 0;
+  const crossingAssetIds: string[] = [];
   for (let idx = 0; idx < cellPath.length - 1; idx++) {
     const current = cellPath[idx];
     const neighbor = cellPath[idx + 1];
-    const cx = getX(current);
-    const cy = getY(current);
-
-    let stepCost = Math.hypot(cx - getX(neighbor), cy - getY(neighbor));
+    let stepCost = Math.hypot(getX(current) - getX(neighbor), getY(current) - getY(neighbor));
     const slope = Math.abs(state.elevation[neighbor] - state.elevation[current]);
     stepCost += (slope / 100) * 5.0;
 
@@ -190,34 +264,26 @@ export function resolveTransportPath(
     if (biome === "wetland") stepCost += 6.0;
     if (biome === "forest") stepCost += 2.0;
 
-    const currRiver = isRiverCell(state, current);
-    const neighRiver = isRiverCell(state, neighbor);
-
-    if (currRiver || neighRiver) {
+    if (isRiverCell(state, current) || isRiverCell(state, neighbor)) {
       let hasBridge = false;
       for (const bId of Object.keys(state.bridges)) {
         const bridge = state.bridges[bId];
         if (bridge.status === "active" && (bridge.cellId === current || bridge.cellId === neighbor)) {
           hasBridge = true;
-          if (!crossingAssetIds.includes(bId)) {
-            crossingAssetIds.push(bId);
-          }
+          if (!crossingAssetIds.includes(bId)) crossingAssetIds.push(bId);
           break;
         }
       }
-      if (!hasBridge) {
-        stepCost += 40.0; // River crossing penalty without a bridge
-      }
+      if (!hasBridge) stepCost += 40.0; // River crossing penalty without a bridge
     }
     totalTime += stepCost;
   }
 
+  const corridorHash = fnv1a64(cellPath.join(","));
   return {
-    edgeIds: [],
     totalTravelTime: totalTime,
-    residualCapacity: 10,
     crossingAssetIds,
-    mode: "off_network",
+    capacityKey: `offnet:${loId}:${hiId}:${corridorHash}`,
   };
 }
 
@@ -289,6 +355,11 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
   // Track route capacity usage across all commodities
   const usedCapacity: Record<string, number> = {};
 
+  // Off-network corridor geometry is stable for the whole year; memoize it so
+  // repeated pair resolutions across allocation iterations and goods do not
+  // recompute grid pathfinding.
+  const offnetCache = new Map<string, OffnetGeometry | null>();
+
   // 2. Perform min-cost trade allocation per good
   for (const good of GOODS) {
     const basePrice = BASE_PRICES[good];
@@ -300,7 +371,10 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
     if (sellers.length === 0 || buyers.length === 0) continue;
 
     const exhaustedPairs = new Set<string>();
-    let tradeCounter = 0;
+    // Pair-scoped allocation ordinal: counts allocations for a specific
+    // seller->buyer pair (this good, this year). Independent of unrelated
+    // trades, so it yields a branch-stable correlation identity.
+    const pairOrdinals: Record<string, number> = {};
 
     while (true) {
       const activeSellers = sellers.filter(id => surplus[id][good] > 0);
@@ -315,7 +389,7 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
           const pairKey = `${sellerId}_${buyerId}`;
           if (exhaustedPairs.has(pairKey)) continue;
 
-          const path = resolveTransportPath(state, sellerId, buyerId, usedCapacity);
+          const path = resolveTransportPath(state, sellerId, buyerId, usedCapacity, offnetCache);
           if (path) {
             pairs.push({ sellerId, buyerId, path });
           }
@@ -339,16 +413,17 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
       const sellAvail = surplus[bestPair.sellerId][good];
       const buyNeeded = deficit[bestPair.buyerId][good];
 
-      // Check route capacity constraint
-      let routeLimit = bestPair.path.residualCapacity;
-      if (bestPair.path.mode === "network") {
-        for (const edgeId of bestPair.path.edgeIds) {
-          const currentUsage = usedCapacity[edgeId] || 0;
-          const route = state.routes[edgeId];
-          if (route) {
-            routeLimit = Math.min(routeLimit, Math.max(0, route.capacity - currentUsage));
-          }
-        }
+      // Enforce capacity across every capacity key of the resolved path:
+      // route edge IDs for network paths, the shared direction-independent
+      // corridor key for off-network paths. This bounds both network and
+      // off-network throughput uniformly and cannot reset mid-year.
+      let routeLimit = bestPair.path.capacityKeys.length > 0
+        ? Infinity
+        : bestPair.path.residualCapacity;
+      for (const key of bestPair.path.capacityKeys) {
+        const currentUsage = usedCapacity[key] || 0;
+        const limit = capacityLimitForKey(state, key);
+        routeLimit = Math.min(routeLimit, Math.max(0, limit - currentUsage));
       }
 
       // Local price with distance markup
@@ -367,11 +442,17 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
       surplus[bestPair.sellerId][good] -= tradeVolume;
       deficit[bestPair.buyerId][good] -= tradeVolume;
 
-      if (bestPair.path.mode === "network") {
-        for (const edgeId of bestPair.path.edgeIds) {
-          usedCapacity[edgeId] = (usedCapacity[edgeId] || 0) + tradeVolume;
-        }
+      // Consume capacity for every key of the resolved path (network edges or
+      // the shared off-network corridor). Consumption persists for the rest of
+      // the simulation year.
+      for (const key of bestPair.path.capacityKeys) {
+        usedCapacity[key] = (usedCapacity[key] || 0) + tradeVolume;
       }
+
+      // Pair-scoped ordinal for branch-stable event identity.
+      const pairOrdinalKey = `${bestPair.sellerId}_${bestPair.buyerId}`;
+      const pairOrdinal = pairOrdinals[pairOrdinalKey] ?? 0;
+      pairOrdinals[pairOrdinalKey] = pairOrdinal + 1;
 
       // Exchange wealth
       const exportRevenueVal = tradeVolume * basePrice;
@@ -419,9 +500,10 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
         }
       }
 
-      const pathResolvedEventId = `path_resolve_${bestPair.sellerId}_to_${bestPair.buyerId}_${good}_${year}_${tradeCounter}`;
+      const pathResolvedEventId = `path_resolve_${bestPair.sellerId}_to_${bestPair.buyerId}_${good}_${year}_${pairOrdinal}`;
       ledger.addEvent({
         eventId: pathResolvedEventId,
+        correlationKey: `path:${year}:${bestPair.sellerId}:${bestPair.buyerId}:${good}:${pairOrdinal}`,
         time: { year },
         eventType: "transport_path_resolved",
         location: { cellId: seller.cellId },
@@ -446,15 +528,22 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
         parentEventIds: bridgeParentIds,
         resultingEventIds: [],
         ruleId: "transport_routing",
-        summaryTemplate: "Transport path resolved from {sellerName} to {buyerName} via {mode} mode.",
-        summaryArguments: { sellerName: seller.name, buyerName: buyer.name, mode: bestPair.path.mode },
+        summaryTemplate: "Transport path resolved from {sellerName} to {buyerName} via {mode} mode ({pathSignature}).",
+        summaryArguments: {
+          sellerName: seller.name,
+          buyerName: buyer.name,
+          mode: bestPair.path.mode,
+          pathSignature: bestPair.path.pathSignature,
+          capacityKeys: bestPair.path.capacityKeys.join(","),
+        },
         confidence: 1.0,
       });
 
       // B. Trade allocation
-      const tradeAllocEventId = `trade_alloc_${bestPair.sellerId}_to_${bestPair.buyerId}_${good}_${year}_${tradeCounter}`;
+      const tradeAllocEventId = `trade_alloc_${bestPair.sellerId}_to_${bestPair.buyerId}_${good}_${year}_${pairOrdinal}`;
       ledger.addEvent({
         eventId: tradeAllocEventId,
+        correlationKey: `trade:${year}:${bestPair.sellerId}:${bestPair.buyerId}:${good}:${pairOrdinal}`,
         time: { year },
         eventType: "trade_allocation",
         location: { cellId: buyer.cellId },
@@ -488,7 +577,8 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
       // C. Market access changed
       if (buyer.marketAccess !== buyerBeforeAccess) {
         ledger.addEvent({
-          eventId: `market_access_${buyer.id}_from_${seller.id}_${good}_${year}_${tradeCounter}`,
+          eventId: `market_access_${buyer.id}_from_${seller.id}_${good}_${year}_${pairOrdinal}`,
+          correlationKey: `market:${year}:${buyer.id}:from:${seller.id}:${good}:${pairOrdinal}`,
           time: { year },
           eventType: "market_access_changed",
           location: { cellId: buyer.cellId },
@@ -508,7 +598,8 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
       }
       if (seller.marketAccess !== sellerBeforeAccess) {
         ledger.addEvent({
-          eventId: `market_access_${seller.id}_to_${buyer.id}_${good}_${year}_${tradeCounter}`,
+          eventId: `market_access_${seller.id}_to_${buyer.id}_${good}_${year}_${pairOrdinal}`,
+          correlationKey: `market:${year}:${seller.id}:to:${buyer.id}:${good}:${pairOrdinal}`,
           time: { year },
           eventType: "market_access_changed",
           location: { cellId: seller.cellId },
@@ -529,7 +620,8 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
 
       // D. Settlement wealth changed
       ledger.addEvent({
-        eventId: `wealth_change_${buyer.id}_import_from_${seller.id}_${good}_${year}_${tradeCounter}`,
+        eventId: `wealth_change_${buyer.id}_import_from_${seller.id}_${good}_${year}_${pairOrdinal}`,
+        correlationKey: `wealth:${year}:${seller.id}:${buyer.id}:${good}:import:${pairOrdinal}`,
         time: { year },
         eventType: "settlement_wealth_changed",
         location: { cellId: buyer.cellId },
@@ -548,7 +640,8 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
       });
 
       ledger.addEvent({
-        eventId: `wealth_change_${seller.id}_export_to_${buyer.id}_${good}_${year}_${tradeCounter}`,
+        eventId: `wealth_change_${seller.id}_export_to_${buyer.id}_${good}_${year}_${pairOrdinal}`,
+        correlationKey: `wealth:${year}:${seller.id}:${buyer.id}:${good}:export:${pairOrdinal}`,
         time: { year },
         eventType: "settlement_wealth_changed",
         location: { cellId: seller.cellId },
@@ -565,7 +658,6 @@ export function updateEconomy(state: WorldState, ledger: CausalLedger, year: num
         summaryArguments: { name: seller.name, before: sellerBeforeWealth.toFixed(0), after: sellerAfterWealth.toFixed(0), good },
         confidence: 1.0,
       });
-      tradeCounter++;
     }
   }
 

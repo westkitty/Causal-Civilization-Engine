@@ -62,5 +62,8 @@ describe("Causal Civilization Engine - UI mounting check", () => {
 
     root.unmount();
     document.body.removeChild(container);
-  }, 60000);
+    // Generous timeout: the synchronous fallback runs a full 400-year
+    // simulation on the test thread (the browser uses an off-main-thread
+    // Worker instead) and competes with the parallel kernel/repairs suites.
+  }, 180000);
 });

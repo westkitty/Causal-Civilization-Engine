@@ -211,8 +211,14 @@ export function updatePolitics(state: WorldState, ledger: CausalLedger, year: nu
             const tax = Math.floor(s.wealth * gov.taxRate);
             s.wealth = Math.max(100, s.wealth - tax);
             if (beforeWealth !== s.wealth) {
-              taxReductions.push({ s, beforeWealth, tax: beforeWealth - s.wealth });
-              taxCollected += (beforeWealth - s.wealth);
+              const actualTax = beforeWealth - s.wealth;
+              taxReductions.push({ s, beforeWealth, tax: actualTax });
+              taxCollected += actualTax;
+              // Book the actual (clamped) reduction into the per-settlement
+              // reconciliation ledger so full-year wealth reconciles.
+              if (s.__transientReconciliation) {
+                s.__transientReconciliation.taxesPaid += actualTax;
+              }
             }
           }
         }
