@@ -543,3 +543,53 @@ tests (verified by each test's own error-collector assertions, all of which
 passed). Do not treat the pre-closure "5 passed" / "1 passed" entries above as
 evidence for this commit — they were captured against earlier commits, named
 explicitly by SHA where recorded.
+
+### 2026-07-15 Parable map-control port amendment
+
+Starting SHA `c10da4505ca240263da301f45d71fd6d53e418a5`. Full detail lives in
+`docs/PARABLE_CONTROL_PORT.md` (the required deliverable for this pass); this
+entry records the audit-relevant summary.
+
+- **Scope discipline**: `/Users/andrew/Parable` was read-only for the entire
+  task (`ls`/`find`/`grep`/`cat`/`Read` only — no write, build, install, or
+  execution). Its state (`branch spike/godot-hand-feel-2026-07-02`, HEAD
+  `d6f66b705c0be43be791585b2b6953450ecbd9c1`, clean tree, nothing staged) was
+  recorded before inspection and confirmed byte-identical after all CCE
+  implementation and testing work completed.
+- **Source correction applied mid-task**: the obvious candidate — Parable's
+  browser-playable Three.js runtime (`src/main.js` +
+  `src/runtime/main.part*.js.txt`) — was inspected first and found to have a
+  fully static camera (set once at boot, touched again only by `resize`) and
+  no navigation controls whatsoever; its pointer handling drives an unrelated
+  spiral-gesture ritual mechanic. The actual control scheme lives in
+  `godot-spike/scripts/camera_rig.gd` (a Godot 4 orbit rig), confirmed by
+  cross-referencing Parable's own automated test contract
+  (`verify_playability_surrogates.gd`) and human-authored control table
+  (`README_FOR_ANDREW.md`) — three independent sources agreeing.
+- **New defect found and fixed (application code, not test)**: none. Every
+  defect found during implementation and the adversarial resweep was in the
+  *test* code (settle-wait timing given this environment's ~9 FPS
+  software-rendered `OrbitControls` damping; a seed-input keystroke side
+  effect that restarted the 400-year baseline simulation mid-test; a
+  coordinate assumption that ignored the mobile control tray's intentional
+  overlap of the map canvas) — see `docs/PARABLE_CONTROL_PORT.md`'s
+  Adversarial Resweep section for the full account of each, including how
+  each was distinguished from a real regression before being fixed.
+- **One Parable behavior implemented then reverted**: a world-position pan
+  bound (attempted via `OrbitControls.maxTargetRadius`) was removed after
+  adversarial testing (orbit-from-origin vs. orbit-after-a-large-pan)
+  showed it destabilizing the orbit target — a genuine, user-visible
+  interaction bug the resweep process was designed to catch before shipping.
+  Documented as a limitation rather than silently dropped; panning is
+  unbounded in this port.
+- **Test evidence**: 29 new Vitest unit tests (`src/__tests__/cameraControls.test.ts`,
+  all passing) for the extracted pure control logic; 4 new Playwright tests
+  (`tests/e2e/camera-controls.spec.ts`) plus two additions to the existing
+  branch-comparison test in `tests/e2e/e2e.spec.ts` (divider arrow-key
+  retention; camera interaction during split comparison), all passing —
+  reported in full in the Required Validation section of the final session
+  report for this pass.
+- **Regression check**: entity selection and split-comparison raycasting both
+  remain fully functional after adding drag-to-pan on the left mouse button
+  (verified directly — a pan-drag does not spuriously select/deselect, and a
+  genuine click after a drag still selects correctly).

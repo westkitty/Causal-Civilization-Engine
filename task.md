@@ -85,6 +85,15 @@
   - `[x]` Fixed a Playwright locator ambiguity found while running the full suite fresh (not an application regression)
   - `[x]` Ran the complete six-test Playwright suite uninterrupted on the final commit: 6/6 passed, 18.3 minutes, zero page/console errors
 
+- `[x]` **Phase 17: Parable map-control port** (see `docs/PARABLE_CONTROL_PORT.md`)
+  - `[x]` Verified read-only: `/Users/andrew/Parable` never edited, built, installed, or run; state confirmed identical before and after
+  - `[x]` Reverse-engineered Parable's actual camera rig (`godot-spike/scripts/camera_rig.gd` + `hand_input.gd`), not the static-camera web runtime, cross-checked against Parable's own test contract and human-authored docs
+  - `[x]` Ported left-drag pan, middle/Shift/Alt-drag orbit, scroll-wheel zoom, Q/E/W/S/+/− keyboard, and R/reset-button — matching Parable's bindings, direction semantics, and damping shape
+  - `[x]` Preserved centered world origin, initial camera view, mount-once renderer lifecycle, entity selection, split-comparison raycasting, timeline/divider keyboard operation, and seed-input editing
+  - `[x]` Added input-conflict protections (typing/Inspector suppression, click-vs-drag threshold) and focus-loss cleanup (window blur / tab-hidden clears held keys and in-progress drags)
+  - `[x]` One Parable behavior (world-position pan bound) implemented then deliberately removed after adversarial testing showed it destabilizing orbit — documented, not silently dropped
+  - `[x]` 29 new Vitest unit tests for extracted pure control logic; 4 new Playwright tests plus additions to the existing branch-comparison test for real-browser coverage
+
 ## Legend
 
 `[x]` implemented and verified at the stated level · `[deferred]` recorded, not done (rationale in the audit).

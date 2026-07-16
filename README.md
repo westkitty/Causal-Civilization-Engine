@@ -69,6 +69,11 @@ passed) on the UI-verification-closure commit.
 
 The application is organized as a map-first causal-history workbench:
 
+- map navigation is ported from Parable's Godot camera rig (see
+  `docs/PARABLE_CONTROL_PORT.md` for the full behavioral contract and
+  read-only source citations): left-drag pans, middle-drag (or Shift/Alt-left-drag)
+  orbits, scroll wheel zooms, Q/E orbit and W/S pitch and +/− zoom via
+  keyboard, and R (or the on-map reset button) returns to the initial view;
 - the shell names simulation readiness, current year, active overlay, branch state,
   seed replacement behavior, and the primary available action;
 - baseline and counterfactual Worker runs expose real percentage progress without

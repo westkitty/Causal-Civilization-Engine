@@ -500,7 +500,7 @@ function App() {
           />
 
           <p className="map-help">
-            <span aria-hidden="true">↔</span> Drag to orbit · scroll to zoom · select a settlement, road, or bridge to inspect
+            <span aria-hidden="true">↔</span> Drag to pan · middle-drag (or Shift/Alt-drag, Q/E/W/S) to orbit · scroll or +/− to zoom · R to reset · select a settlement, road, or bridge to inspect
           </p>
 
           {comparisonMode === "swipe" && activeStateB && (

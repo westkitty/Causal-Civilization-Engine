@@ -129,3 +129,56 @@ closure amendment".
 - **Leak Profiling**: a bounded 30-scrub check showed 0 MB heap growth; long-run leak freedom remains unverified.
 - **Politics subsystem**: ACTIVATED AND VERIFIED for the existing government bootstrap, political-control propagation, taxation, capital succession, deterministic replay, counterfactual prefix, and Political overlay paths. No new political mechanics were added.
 - **Remaining architecture limits**: the large cached-state/timeline-storage and Worker-payload redesign remains deferred, as do broader performance work and new political mechanics.
+
+## 2026-07-15 Parable map-control port
+
+Starting SHA `c10da4505ca240263da301f45d71fd6d53e418a5`. Ported the map-navigation
+camera controls from `/Users/andrew/Parable` (a separate, strictly read-only
+reference repository — never edited, built, or run) into the existing
+`OrbitControls` setup in `src/rendering/MapViewer.tsx`, without redesigning the
+interface.
+
+Parable's browser-playable Three.js prototype has a static, never-moved camera
+and no navigation scheme at all — everything ported comes from
+`godot-spike/scripts/camera_rig.gd` and `hand_input.gd`, a Godot 4 orbit/pan/zoom
+rig, cross-checked against Parable's own automated test contract
+(`godot-spike/tests/verify_playability_surrogates.gd`) and its human-authored
+control table (`godot-spike/README_FOR_ANDREW.md`). Full source citations,
+adapted-vs-literal values, and behavior intentionally not transferred (touch —
+absent in Parable; Escape, right-mouse-button — Parable's own held-object/
+gesture gameplay with no CCE analog) are recorded in
+`docs/PARABLE_CONTROL_PORT.md`.
+
+Ported: left-drag pans (was `OrbitControls`' default rotate), middle-drag (or
+Shift/Alt-left-drag, mirroring Parable's own trackpad fallback) orbits, scroll
+wheel zooms, Q/E orbit and W/S pitch and +/− zoom continuously while held via
+keyboard, and R (or a new on-map reset button) glides back to CCE's own
+existing initial camera view using the exact same `1 − exp(−12·dt)` damping
+shape as Parable's `CAMERA_SMOOTH`. A pointerdown/click distance check (ported
+from Parable's own `CLICK_DRAG_THRESHOLD_PX`) keeps the new drag-to-pan binding
+from interfering with entity selection. Window blur / tab-hidden clears any
+held key or in-progress drag without moving the camera, mirroring Parable's own
+focus-loss contract. One Parable behavior was attempted and then deliberately
+not shipped: a pan-distance bound (`OrbitControls.maxTargetRadius`), removed
+after adversarial testing showed it destabilizing a subsequent orbit gesture —
+see `docs/PARABLE_CONTROL_PORT.md`'s "Engine-specific differences" section.
+
+New pure logic lives in `src/rendering/cameraControls.ts` (key-action mapping,
+per-frame orbit/pitch/zoom deltas, the click/drag threshold, and the
+typing/Inspector input-conflict guard), covered by 29 new Vitest tests. Real-
+browser coverage lives in `tests/e2e/camera-controls.spec.ts` (4 new tests) plus
+one addition to the existing branch-comparison test in `tests/e2e/e2e.spec.ts`
+(divider arrow-key retention and camera interaction during split comparison).
+Building this coverage surfaced three test-authoring defects (not application
+bugs) — an under-provisioned settle-wait given this environment's ~9 FPS
+software-rendered `OrbitControls` damping, a seed-input side effect that
+restarted the baseline simulation mid-test, and a coordinate assumption that
+ignored the mobile control tray's intentional overlap of the map canvas — all
+three fixed in the test, documented in `docs/PARABLE_CONTROL_PORT.md`'s
+Adversarial Resweep section. No Critical/High/Blocker/Major defect was found in
+the ported application code itself.
+
+Parable's read-only state (`branch spike/godot-hand-feel-2026-07-02`, HEAD
+`d6f66b705c0be43be791585b2b6953450ecbd9c1`, clean working tree, nothing staged)
+was recorded before any inspection and re-verified identical afterward — see
+`docs/PARABLE_CONTROL_PORT.md`.

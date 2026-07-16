@@ -212,6 +212,25 @@ test("counterfactual suppression produces a diverged branch and comparison view"
   const afterSplit = await page.locator("canvas").screenshot();
   expect(Buffer.compare(beforeSplit, afterSplit)).not.toBe(0);
 
+  // Focused comparison divider retains native arrow-key behavior — the
+  // ported Parable camera scheme never binds arrow keys, so this must be
+  // unaffected by it.
+  await divider.focus();
+  await divider.press("ArrowLeft");
+  const afterArrowKey = await divider.inputValue();
+  expect(Number(afterArrowKey)).toBeLessThan(25);
+
+  // Ported camera controls (drag-to-pan, wheel-zoom) remain usable while
+  // split comparison is active, and don't corrupt which scene's raycast
+  // results entity selection resolves against.
+  const canvasBox = (await page.locator("canvas").boundingBox())!;
+  await page.mouse.move(canvasBox.x + canvasBox.width / 2, canvasBox.y + canvasBox.height / 2);
+  await page.mouse.down({ button: "left" });
+  await page.mouse.move(canvasBox.x + canvasBox.width / 2 + 60, canvasBox.y + canvasBox.height / 2 + 30, { steps: 8 });
+  await page.mouse.up({ button: "left" });
+  await page.mouse.wheel(0, -200);
+  await page.waitForTimeout(300);
+
   // Inspecting the suppressed bridge shows the divergence.
   await page.evaluate((id) =>
     (window as unknown as { __cce: { selectEntity: (i: string) => void } }).__cce.selectEntity(id), bridgeId);

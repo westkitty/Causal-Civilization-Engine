@@ -391,6 +391,7 @@ code {
   background: var(--color-recessed);
 }
 
+.map-canvas-wrap,
 .map-canvas,
 .map-empty {
   position: absolute;
@@ -404,6 +405,13 @@ code {
   display: block;
   width: 100% !important;
   height: 100% !important;
+}
+
+.map-reset-button {
+  position: absolute;
+  z-index: 20;
+  right: var(--space-3);
+  bottom: var(--space-3);
 }
 
 .map-empty {

@@ -1,8 +1,21 @@
 import React, { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { RotateCcw } from "lucide-react";
 import type { WorldState } from "../core/types";
 import { murmurHash3 } from "../core/random";
+import {
+  mapKeyToCameraAction,
+  computeCameraFrameDeltas,
+  shouldSuppressCameraKeys,
+  isClickNotDrag,
+  type CameraKeyAction,
+} from "./cameraControls";
+
+// Camera-reset glide rate, ported directly from Parable's CAMERA_SMOOTH
+// (godot-spike/scripts/camera_rig.gd) — see docs/PARABLE_CONTROL_PORT.md.
+const CAMERA_RESET_SMOOTH = 12.0;
+const CAMERA_RESET_EPSILON = 0.01;
 
 interface MapViewerProps {
   stateA: WorldState;
@@ -27,6 +40,10 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
+  // Set by the mount-once effect; lets JSX (e.g. the reset button) trigger
+  // behavior owned by the persistent camera-control closure without lifting
+  // that closure's state into React.
+  const triggerResetRef = useRef<() => void>(() => {});
   
   // Track scenes
   const sceneARef = useRef<THREE.Scene | null>(null);
@@ -86,6 +103,27 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     controls.minDistance = 10;
     controls.maxDistance = 300;
     controls.target.set(0, 0, 0);
+    // Ported from Parable's camera_rig.gd (docs/PARABLE_CONTROL_PORT.md):
+    // left-drag pans, middle-drag orbits (the reverse of OrbitControls'
+    // defaults); a modest polar-angle floor avoids a fully top-down snap,
+    // matching Parable's pitch never reaching true overhead. Parable's
+    // world-position pan clamp (position.x/z bounded to +/-60) was attempted
+    // here via OrbitControls' maxTargetRadius but removed: adversarially
+    // testing orbit-after-pan showed the target drifting away from the
+    // orbit pivot once panned near the clamp boundary (an interaction
+    // between the radius clamp and repeated per-frame recomputation, not
+    // present when orbiting from an unclamped target). Panning is therefore
+    // unbounded in this port; see docs/PARABLE_CONTROL_PORT.md.
+    controls.mouseButtons = {
+      LEFT: THREE.MOUSE.PAN,
+      MIDDLE: THREE.MOUSE.ROTATE,
+      RIGHT: THREE.MOUSE.PAN,
+    };
+    controls.minPolarAngle = THREE.MathUtils.degToRad(8);
+    // Captures the existing initial camera view as the "R"/reset-button home
+    // pose (Parable's own reset target does not transfer — its numbers
+    // describe a different, smaller world; see PARABLE_CONTROL_PORT.md).
+    controls.saveState();
     controlsRef.current = controls;
 
     // 3. Initialize Scenes
@@ -134,7 +172,20 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
 
+    // Ported click-vs-drag disambiguation (Parable's hand_input.gd
+    // CLICK_DRAG_THRESHOLD_PX, see docs/PARABLE_CONTROL_PORT.md): now that
+    // left-drag pans the camera, a pan gesture's mouseup must not also
+    // register as an entity-selection click.
+    let pointerDownPos: { x: number; y: number } | null = null;
+    const handlePointerDown = (event: PointerEvent) => {
+      pointerDownPos = { x: event.clientX, y: event.clientY };
+    };
+    renderer.domElement.addEventListener("pointerdown", handlePointerDown);
+
     const handleClick = (event: MouseEvent) => {
+      const downPos = pointerDownPos;
+      pointerDownPos = null;
+      if (downPos && !isClickNotDrag(downPos.x, downPos.y, event.clientX, event.clientY)) return;
       if (!containerRef.current || !cameraRef.current || !rendererRef.current) return;
       const rect = rendererRef.current.domElement.getBoundingClientRect();
       mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -166,13 +217,111 @@ export const MapViewer: React.FC<MapViewerProps> = ({
 
     renderer.domElement.addEventListener("click", handleClick);
 
+    // 5b. Ported keyboard controls (Q/E orbit, W/S pitch, +/- zoom, R reset —
+    // see docs/PARABLE_CONTROL_PORT.md). Held-key state lives in a plain
+    // closure Set, not React state, so holding a key never triggers a
+    // re-render; per-frame movement is applied in the animation loop below.
+    const heldCameraActions = new Set<CameraKeyAction>();
+    let resetActive = false;
+
+    const syncOrbitModifier = (event: KeyboardEvent) => {
+      controls.mouseButtons.LEFT = event.shiftKey || event.altKey ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      syncOrbitModifier(event);
+      if (shouldSuppressCameraKeys(event.target)) return;
+      const action = mapKeyToCameraAction(event.code);
+      if (!action) return;
+      event.preventDefault();
+      if (action === "reset") {
+        resetActive = true;
+        heldCameraActions.clear();
+        return;
+      }
+      heldCameraActions.add(action);
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      syncOrbitModifier(event);
+      const action = mapKeyToCameraAction(event.code);
+      if (action && action !== "reset") heldCameraActions.delete(action);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+
+    // Ported focus-loss contract (Parable's world.gd _notification handler:
+    // window blur / mouse-exit clears in-progress orbit and any held-key
+    // state without moving the camera; refocus never resumes a drag — see
+    // docs/PARABLE_CONTROL_PORT.md).
+    const clearTransientCameraInput = () => {
+      heldCameraActions.clear();
+      controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+      pointerDownPos = null;
+      // OrbitControls has no public "cancel active drag" method; resetting
+      // its own interaction-state field is the standard, minimal way to stop
+      // a drag that will never receive its matching pointerup (e.g. the
+      // button was released in a different window after an alt-tab). Not
+      // part of the public .d.ts, hence the narrow cast.
+      (controls as unknown as { state: number }).state = -1;
+    };
+    window.addEventListener("blur", clearTransientCameraInput);
+    const handleVisibilityChange = () => {
+      if (document.hidden) clearTransientCameraInput();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    triggerResetRef.current = () => {
+      resetActive = true;
+      heldCameraActions.clear();
+    };
+
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
     // 6. Animation Loop
     let animationFrameId: number;
     let frameCount = 0;
+    let lastFrameTime = performance.now();
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
       frameCount++;
-      
+
+      const now = performance.now();
+      // Clamp so a throttled/backgrounded tab resuming doesn't apply one huge
+      // catch-up step (e.g. a full orbit) on its first frame back.
+      const deltaSeconds = Math.min(0.1, Math.max(0, (now - lastFrameTime) / 1000));
+      lastFrameTime = now;
+
+      if (resetActive && cameraRef.current && controlsRef.current) {
+        const ctrl = controlsRef.current;
+        const cam = cameraRef.current;
+        if (prefersReducedMotion) {
+          cam.position.copy(ctrl.position0);
+          ctrl.target.copy(ctrl.target0);
+          resetActive = false;
+        } else {
+          const smooth = 1 - Math.exp(-CAMERA_RESET_SMOOTH * deltaSeconds);
+          cam.position.lerp(ctrl.position0, smooth);
+          ctrl.target.lerp(ctrl.target0, smooth);
+          if (
+            cam.position.distanceTo(ctrl.position0) < CAMERA_RESET_EPSILON &&
+            ctrl.target.distanceTo(ctrl.target0) < CAMERA_RESET_EPSILON
+          ) {
+            cam.position.copy(ctrl.position0);
+            ctrl.target.copy(ctrl.target0);
+            resetActive = false;
+          }
+        }
+      } else if (controlsRef.current && heldCameraActions.size > 0 && deltaSeconds > 0) {
+        const ctrl = controlsRef.current;
+        const { orbitAngle, pitchAngle, zoomScale } = computeCameraFrameDeltas(heldCameraActions, deltaSeconds);
+        if (orbitAngle !== 0) ctrl.rotateLeft(orbitAngle);
+        if (pitchAngle !== 0) ctrl.rotateUp(pitchAngle);
+        if (zoomScale < 1) ctrl.dollyIn(zoomScale);
+        else if (zoomScale > 1) ctrl.dollyOut(1 / zoomScale);
+      }
+
       if (controlsRef.current) {
         controlsRef.current.update();
       }
@@ -243,16 +392,35 @@ export const MapViewer: React.FC<MapViewerProps> = ({
           kinds: counts,
           activeOverlay: activeOverlayRef.current,
           terrainDistinctColors: terrainColors.size,
+          // Camera-control diagnostics for the ported Parable control scheme
+          // (docs/PARABLE_CONTROL_PORT.md) — dev/test only, never in production.
+          cameraPosition: cameraRef.current
+            ? { x: cameraRef.current.position.x, y: cameraRef.current.position.y, z: cameraRef.current.position.z }
+            : null,
+          cameraTarget: controlsRef.current
+            ? { x: controlsRef.current.target.x, y: controlsRef.current.target.y, z: controlsRef.current.target.z }
+            : null,
+          cameraHeldActions: [...heldCameraActions],
+          cameraResetActive: resetActive,
+          cameraControlsEnabled: controlsRef.current?.enabled ?? false,
+          cameraMouseButtonLeft: controls.mouseButtons.LEFT,
         };
       };
     }
 
     return () => {
       window.removeEventListener("resize", handleResize);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", clearTransientCameraInput);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      triggerResetRef.current = () => {};
       if (rendererRef.current) {
+        rendererRef.current.domElement.removeEventListener("pointerdown", handlePointerDown);
         rendererRef.current.domElement.removeEventListener("click", handleClick);
         rendererRef.current.dispose();
       }
+      controls.dispose();
       cancelAnimationFrame(animationFrameId);
     };
     // Mount-once: the renderer, camera, controls, and animation loop persist for
@@ -290,7 +458,20 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     }
   }, [stateA, stateB, activeOverlay]);
 
-  return <div ref={containerRef} className="map-canvas" aria-label="Interactive civilization map" />;
+  return (
+    <div className="map-canvas-wrap">
+      <div ref={containerRef} className="map-canvas" aria-label="Interactive civilization map" />
+      <button
+        type="button"
+        className="icon-button map-reset-button"
+        onClick={() => triggerResetRef.current()}
+        aria-label="Reset camera view"
+        title="Reset camera to the default view (R)"
+      >
+        <RotateCcw aria-hidden="true" />
+      </button>
+    </div>
+  );
 };
 
 // Procedurally builds the visual meshes for a state snapshot
