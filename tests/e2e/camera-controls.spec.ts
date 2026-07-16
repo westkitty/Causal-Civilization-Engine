@@ -12,6 +12,8 @@ interface CameraDiag {
   cameraResetActive: boolean;
   cameraControlsEnabled: boolean;
   cameraMouseButtonLeft: number;
+  cameraActivePointerId: number | null;
+  cameraDragExceeded: boolean;
   drawCalls: number;
 }
 
@@ -165,7 +167,7 @@ test("ported Parable camera controls: pan, orbit, zoom, keyboard, reset, and inp
   await page.locator("body").click({ position: { x: 10, y: 10 } }); // ensure no input has focus
   const beforeQ = await waitForCameraSettled(page);
   await page.keyboard.down("KeyQ");
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(400);
   await page.keyboard.up("KeyQ");
   const afterQ = await diag(page);
   expect(dist(afterQ.cameraPosition!, beforeQ.cameraPosition!)).toBeGreaterThan(0.01);
@@ -174,7 +176,7 @@ test("ported Parable camera controls: pan, orbit, zoom, keyboard, reset, and inp
 
   const beforeE = await waitForCameraSettled(page);
   await page.keyboard.down("KeyE");
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(400);
   await page.keyboard.up("KeyE");
   const afterE = await waitForCameraSettled(page);
   // Q and E orbit in opposite directions: the position delta E produces
@@ -183,7 +185,7 @@ test("ported Parable camera controls: pan, orbit, zoom, keyboard, reset, and inp
 
   const beforeW = await waitForCameraSettled(page);
   await page.keyboard.down("KeyW");
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(400);
   await page.keyboard.up("KeyW");
   const afterW = await waitForCameraSettled(page);
   expect(dist(afterW.cameraPosition!, beforeW.cameraPosition!)).toBeGreaterThan(0.01);
@@ -191,14 +193,14 @@ test("ported Parable camera controls: pan, orbit, zoom, keyboard, reset, and inp
   const beforeZoomIn = await waitForCameraSettled(page);
   const beforeZoomInDist = dist(beforeZoomIn.cameraPosition!, beforeZoomIn.cameraTarget!);
   await page.keyboard.down("Equal");
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(400);
   await page.keyboard.up("Equal");
   const afterZoomIn = await waitForCameraSettled(page);
   const afterZoomInDist = dist(afterZoomIn.cameraPosition!, afterZoomIn.cameraTarget!);
   expect(afterZoomInDist).toBeLessThan(beforeZoomInDist);
 
   await page.keyboard.down("Minus");
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(400);
   await page.keyboard.up("Minus");
   const afterZoomOut = await waitForCameraSettled(page);
   const afterZoomOutDist = dist(afterZoomOut.cameraPosition!, afterZoomOut.cameraTarget!);
@@ -292,18 +294,32 @@ test("ported Parable camera controls: pan, orbit, zoom, keyboard, reset, and inp
   // keyboard camera action below for the same reason it must suppress them
   // while the seed field is focused.
   await page.locator("body").click({ position: { x: 10, y: 10 } });
-  const beforeAdversarial = await waitForCameraSettled(page);
+  await waitForCameraSettled(page);
 
   // Opposite keys held simultaneously cancel out (no crash, no net drift).
+  // Measures steady-state — position while both keys are already held,
+  // sampled twice with a gap in between — rather than comparing the final,
+  // both-released position back to the state from before either key went
+  // down: page.keyboard.down("KeyQ") and down("KeyE") are two separate,
+  // sequentially-awaited CDP round-trips, and this environment's measured
+  // frame rate is variable enough (~6-10 FPS, see waitForCameraSettled's doc
+  // comment) that a slow round-trip can widen the real gap between them to
+  // tens of milliseconds — real, uncancelled orbit accumulates during that
+  // Q-only window, which a before/after comparison spanning that window
+  // would wrongly read as "cancellation failed". Once both are confirmed
+  // held, steady-state position is a fair, timing-independent check.
   await page.keyboard.down("KeyQ");
   await page.keyboard.down("KeyE");
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(150);
   const bothHeld = await diag(page);
   expect(bothHeld.cameraHeldActions.sort()).toEqual(["orbitLeft", "orbitRight"]);
+  const steadyStateBefore = await diag(page);
+  await page.waitForTimeout(400);
+  const steadyStateAfter = await diag(page);
+  expect(dist(steadyStateAfter.cameraPosition!, steadyStateBefore.cameraPosition!)).toBeLessThan(0.3);
   await page.keyboard.up("KeyQ");
   await page.keyboard.up("KeyE");
-  const afterCancel = await waitForCameraSettled(page);
-  expect(dist(afterCancel.cameraPosition!, beforeAdversarial.cameraPosition!)).toBeLessThan(0.3);
+  await waitForCameraSettled(page);
 
   // Multiple non-opposing keys held simultaneously (orbit + pitch + zoom
   // together) — must not crash and must move on more than one axis.
@@ -375,6 +391,162 @@ test("ported Parable camera controls: pan, orbit, zoom, keyboard, reset, and inp
   await page.keyboard.up("KeyQ");
   await page.waitForTimeout(200);
   expect((await diag(page)).cameraHeldActions).toHaveLength(0);
+
+  // Regression coverage for an external adversarial review of this port
+  // (2026-07-15), continued in this same page session for the same resource
+  // reason as the rest of this test. Each scenario cites the exact
+  // OrbitControls (r185) mechanism confirmed by re-reading
+  // node_modules/three/examples/jsm/controls/OrbitControls.js — see
+  // docs/PARABLE_CONTROL_PORT.md's "External adversarial review" section for
+  // the full account of what was confirmed, what was fixed, and why.
+
+  // Shift+left-drag orbits (target fixed, position moves) — OrbitControls'
+  // own onMouseDown MOUSE.PAN case natively converts Shift+left to rotate;
+  // reactively remapping mouseButtons.LEFT to ROTATE for Shift ourselves (the
+  // original implementation) collided with that native check and silently
+  // canceled it back to pan.
+  const beforeShift = await waitForCameraSettled(page);
+  await page.keyboard.down("ShiftLeft");
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: "left" });
+  await page.mouse.move(cx + 50, cy - 20, { steps: 8 });
+  await page.mouse.up({ button: "left" });
+  await page.keyboard.up("ShiftLeft");
+  const afterShift = await waitForCameraSettled(page);
+  expect(dist(afterShift.cameraTarget!, beforeShift.cameraTarget!)).toBeLessThan(0.3);
+  expect(dist(afterShift.cameraPosition!, beforeShift.cameraPosition!)).toBeGreaterThan(0.5);
+
+  // Alt+left-drag also orbits (Alt is not natively special-cased by
+  // OrbitControls, so this exercises this port's own explicit remap).
+  const beforeAlt = await waitForCameraSettled(page);
+  await page.keyboard.down("AltLeft");
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: "left" });
+  await page.mouse.move(cx - 50, cy + 20, { steps: 8 });
+  await page.mouse.up({ button: "left" });
+  await page.keyboard.up("AltLeft");
+  const afterAlt = await waitForCameraSettled(page);
+  expect(dist(afterAlt.cameraTarget!, beforeAlt.cameraTarget!)).toBeLessThan(0.3);
+  expect(dist(afterAlt.cameraPosition!, beforeAlt.cameraPosition!)).toBeGreaterThan(0.5);
+  // The left-button mode must return to pan afterward, not stay stuck as
+  // rotate from the modifier remap.
+  expect((await diag(page)).cameraMouseButtonLeft).toBe(2); // THREE.MOUSE.PAN
+
+  // A large drag that exceeds the click threshold and then curls back near
+  // its starting point must still be classified as a drag, not a click —
+  // isClickNotDrag alone (checking only the final start/end distance) would
+  // accept this as a click and fire entity-selection at the release point.
+  await page.evaluate(() => (window as unknown as { __cce: { selectEntity: (i: string | null) => void } }).__cce.selectEntity(null));
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: "left" });
+  await page.mouse.move(cx + 80, cy + 60, { steps: 6 }); // out past the 10px threshold
+  await page.mouse.move(cx + 2, cy + 1, { steps: 6 }); // back near the start
+  await page.mouse.up({ button: "left" });
+  await page.waitForTimeout(200);
+  await expect(page.getByRole("heading", { name: "Select a map entity" })).toBeVisible();
+
+  // A sub-threshold pointer wobble (well under 10px) must leave the camera
+  // genuinely stationary, not just avoid triggering selection — OrbitControls
+  // begins accumulating pan from the very first pixel of movement with no
+  // built-in minimum-drag concept, so this port must actively revert any
+  // such accumulation on release for a gesture that is classified as a click.
+  const beforeWobble = await waitForCameraSettled(page);
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: "left" });
+  await page.mouse.move(cx + 3, cy + 2, { steps: 2 });
+  await page.mouse.up({ button: "left" });
+  await page.waitForTimeout(200);
+  const afterWobble = await diag(page);
+  expect(dist(afterWobble.cameraPosition!, beforeWobble.cameraPosition!)).toBeLessThan(0.05);
+  expect(dist(afterWobble.cameraTarget!, beforeWobble.cameraTarget!)).toBeLessThan(0.05);
+
+  // Window blur during an active LEFT-drag (pan) must not wedge
+  // OrbitControls' internal pointer tracking: without routing the cancel
+  // through the library's own _onPointerUp, the stale pointerId (the mouse
+  // reuses the same id for its whole session) causes _isTrackingPointer to
+  // silently swallow the *next* pointerdown before onMouseDown ever runs —
+  // the drag after refocus would do nothing at all.
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: "left" });
+  await page.mouse.move(cx + 40, cy + 10, { steps: 5 });
+  const midBlurDiag = await diag(page);
+  expect(midBlurDiag.cameraActivePointerId).not.toBeNull();
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await page.mouse.up({ button: "left" }); // release now happens "elsewhere" from the app's perspective
+  await page.waitForTimeout(100);
+  expect((await diag(page)).cameraActivePointerId).toBeNull();
+  const beforePostBlurDrag = await waitForCameraSettled(page);
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: "left" });
+  await page.mouse.move(cx - 40, cy - 10, { steps: 5 });
+  await page.mouse.up({ button: "left" });
+  const afterPostBlurDrag = await waitForCameraSettled(page);
+  expect(dist(afterPostBlurDrag.cameraTarget!, beforePostBlurDrag.cameraTarget!)).toBeGreaterThan(0.1);
+
+  // Same for a MIDDLE-drag (orbit) blurred mid-gesture.
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: "middle" });
+  await page.mouse.move(cx + 30, cy - 10, { steps: 5 });
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await page.mouse.up({ button: "middle" });
+  await page.waitForTimeout(100);
+  expect((await diag(page)).cameraActivePointerId).toBeNull();
+  const beforePostBlurOrbit = await waitForCameraSettled(page);
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: "middle" });
+  await page.mouse.move(cx - 30, cy + 10, { steps: 5 });
+  await page.mouse.up({ button: "middle" });
+  const afterPostBlurOrbit = await waitForCameraSettled(page);
+  expect(dist(afterPostBlurOrbit.cameraPosition!, beforePostBlurOrbit.cameraPosition!)).toBeGreaterThan(0.5);
+
+  // Blur mid-drag must also stop OrbitControls' own damped "coasting" of
+  // whatever had already accumulated before the blur, not just block new
+  // input — enableDamping decays _sphericalDelta/_panOffset by a fixed
+  // fraction per update() call rather than zeroing them on cancellation.
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: "left" });
+  await page.mouse.move(cx + 60, cy + 40, { steps: 3 });
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await page.mouse.up({ button: "left" });
+  const rightAfterBlur = await diag(page);
+  await page.waitForTimeout(500);
+  const settledAfterBlur = await diag(page);
+  expect(dist(settledAfterBlur.cameraPosition!, rightAfterBlur.cameraPosition!)).toBeLessThan(0.05);
+
+  // The pointer leaving the map canvas mid-drag (not just the window losing
+  // focus) cancels the drag too, matching Parable's own mouse-exit-the-game-
+  // surface contract — and controls remain usable for a fresh drag afterward.
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: "left" });
+  await page.mouse.move(cx + 20, cy, { steps: 3 });
+  await page.mouse.move(10, 10, { steps: 8 }); // move outside the canvas bounds
+  await page.mouse.up({ button: "left" });
+  await page.waitForTimeout(100);
+  expect((await diag(page)).cameraActivePointerId).toBeNull();
+  const beforePostLeaveDrag = await waitForCameraSettled(page);
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: "left" });
+  await page.mouse.move(cx + 25, cy + 25, { steps: 5 });
+  await page.mouse.up({ button: "left" });
+  const afterPostLeaveDrag = await waitForCameraSettled(page);
+  expect(dist(afterPostLeaveDrag.cameraTarget!, beforePostLeaveDrag.cameraTarget!)).toBeGreaterThan(0.1);
+
+  // Keyboard camera shortcuts must not fire while an ordinary, unrelated
+  // button has focus — shouldSuppressCameraKeys must scope to "appropriate
+  // map control context", not just a denylist of form fields and the
+  // Inspector. Uses the timeline Play button, not the mobile map-controls
+  // tray toggle (CSS `display: none` outside narrow viewports, so it isn't
+  // focusable at this test's 1440x900 desktop width).
+  const playButton = page.getByRole("button", { name: "Play" });
+  await playButton.focus();
+  const beforeFocusedButtonKey = await waitForCameraSettled(page);
+  await page.keyboard.down("KeyQ");
+  await page.waitForTimeout(200);
+  await page.keyboard.up("KeyQ");
+  const afterFocusedButtonKey = await diag(page);
+  expect(dist(afterFocusedButtonKey.cameraPosition!, beforeFocusedButtonKey.cameraPosition!)).toBeLessThan(0.01);
+  expect(afterFocusedButtonKey.cameraHeldActions).toHaveLength(0);
+  await page.locator("body").click({ position: { x: 10, y: 10 } });
 
   expect(errs.pageErrors, errs.pageErrors.join("\n")).toEqual([]);
   const serious = [/Warning: ReactDOM/i];

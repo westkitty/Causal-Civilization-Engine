@@ -5,6 +5,7 @@ import {
   computeCameraFrameDeltas,
   shouldSuppressCameraKeys,
   isClickNotDrag,
+  updateDragExceededThreshold,
   CAMERA_KEY_ORBIT_RATE,
   CAMERA_KEY_PITCH_RATE,
   CLICK_DRAG_THRESHOLD_PX,
@@ -125,6 +126,32 @@ describe("isClickNotDrag", () => {
   });
 });
 
+describe("updateDragExceededThreshold", () => {
+  it("stays false while the pointer has never left the click radius", () => {
+    expect(updateDragExceededThreshold(0, 0, 3, 2, false)).toBe(false);
+  });
+
+  it("becomes true once displacement crosses the threshold", () => {
+    expect(updateDragExceededThreshold(0, 0, 50, 0, false)).toBe(true);
+  });
+
+  it("stays true once exceeded even if the pointer returns near the start", () => {
+    // Simulates a drag that goes out past the threshold, then curls back
+    // near its starting point before release — must not be reclassified as
+    // a click (this is what let a large drag-and-return register as an
+    // entity-selection click).
+    let exceeded = false;
+    exceeded = updateDragExceededThreshold(0, 0, 10, 10, exceeded); // out
+    expect(exceeded).toBe(true);
+    exceeded = updateDragExceededThreshold(0, 0, 1, 1, exceeded); // back near start
+    expect(exceeded).toBe(true);
+  });
+
+  it("is idempotent once already exceeded, regardless of current position", () => {
+    expect(updateDragExceededThreshold(0, 0, 0, 0, true)).toBe(true);
+  });
+});
+
 describe("shouldSuppressCameraKeys", () => {
   it("suppresses when a text input is focused", () => {
     const input = document.createElement("input");
@@ -164,11 +191,39 @@ describe("shouldSuppressCameraKeys", () => {
     document.body.removeChild(aside);
   });
 
-  it("does not suppress for a plain button outside the Inspector", () => {
+  it("suppresses for a button anywhere in the app, not just inside the Inspector", () => {
+    // The task requires keyboard camera movement to begin only in an
+    // appropriate map control context — a denylist of specific elements
+    // (text inputs, the Inspector) is not sufficient: pressing Q/E/W/S while
+    // an ordinary timeline, overlay, or map-control-tray button has focus
+    // must not also move the camera.
     const button = document.createElement("button");
     document.body.appendChild(button);
-    expect(shouldSuppressCameraKeys(button)).toBe(false);
+    expect(shouldSuppressCameraKeys(button)).toBe(true);
     document.body.removeChild(button);
+  });
+
+  it("suppresses for a link", () => {
+    const link = document.createElement("a");
+    link.href = "#";
+    document.body.appendChild(link);
+    expect(shouldSuppressCameraKeys(link)).toBe(true);
+    document.body.removeChild(link);
+  });
+
+  it("suppresses for any element with an explicit tabindex", () => {
+    const div = document.createElement("div");
+    div.tabIndex = 0;
+    document.body.appendChild(div);
+    expect(shouldSuppressCameraKeys(div)).toBe(true);
+    document.body.removeChild(div);
+  });
+
+  it("does not suppress for a plain, non-interactive element (e.g. the map canvas container)", () => {
+    const div = document.createElement("div");
+    document.body.appendChild(div);
+    expect(shouldSuppressCameraKeys(div)).toBe(false);
+    document.body.removeChild(div);
   });
 
   it("does not suppress for a null or non-element target", () => {

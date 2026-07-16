@@ -85,16 +85,34 @@ export function isClickNotDrag(startX: number, startY: number, endX: number, end
   return Math.hypot(endX - startX, endY - startY) < CLICK_DRAG_THRESHOLD_PX;
 }
 
+// Mirrors Parable's own "pending_pan" state (hand_input.gd): once a gesture's
+// displacement from its start crosses the threshold, it stays classified as a
+// drag for the rest of that gesture, even if the pointer later moves back
+// near its starting point — checking only the final start/end distance would
+// let a large drag-and-return be misclassified as a click.
+export function updateDragExceededThreshold(
+  startX: number,
+  startY: number,
+  currentX: number,
+  currentY: number,
+  alreadyExceeded: boolean
+): boolean {
+  if (alreadyExceeded) return true;
+  return !isClickNotDrag(startX, startY, currentX, currentY);
+}
+
 // Camera keyboard shortcuts (Q/E/W/S/+/-/R) must not fire while the user is
-// typing, operating a native form control, or interacting with the Inspector
-// panel — see PARABLE_CONTROL_PORT.md and CCE Phase 4 accessibility
-// requirements. Arrow keys are deliberately not part of Parable's scheme, so
-// timeline/divider slider arrow-key behavior never collides with this check.
+// typing, operating a native form control, interacting with any button/link,
+// or interacting with the Inspector panel — matching the task requirement
+// that keyboard camera movement begin only in an appropriate map control
+// context, not merely avoid a specific denylist of elements. Arrow keys are
+// deliberately not part of Parable's scheme, so timeline/divider slider
+// arrow-key behavior never collides with this check.
 export function shouldSuppressCameraKeys(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "BUTTON" || tag === "A") return true;
   if (target.contentEditable === "true") return true;
-  if (target.closest(".inspector")) return true;
+  if (target.closest("button, a, [role='button'], [tabindex], .inspector")) return true;
   return false;
 }

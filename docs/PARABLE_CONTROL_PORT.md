@@ -381,3 +381,164 @@ the *test*, not the ported application code:
 No Critical, High, Blocker, or Major defect was found in the ported
 application code (`src/rendering/MapViewer.tsx`,
 `src/rendering/cameraControls.ts`) itself during this resweep.
+
+## External adversarial review (2026-07-16)
+
+An independent source-level review of commit `e175c7cd4a670790d31ee1cbd481301dcdde19ac`
+(source inspection and cross-check against Three.js r185 `OrbitControls`; it
+did not have access to `/Users/andrew/Parable` and did not rerun the test
+suites) reported six confirmed bugs. All six were independently re-verified
+against the actual `node_modules/three/examples/jsm/controls/OrbitControls.js`
+source before any fix was made, then fixed, then proven fixed with new
+real-browser Playwright coverage (`tests/e2e/camera-controls.spec.ts`,
+"camera controls survive the external bug-sweep review's adversarial
+checklist"). All six were genuine defects in the initial implementation, not
+false positives.
+
+**BUG-01 (high) — Shift+left-drag panned instead of orbiting.** Confirmed
+exactly as reported. `OrbitControls.onMouseDown`'s `MOUSE.ROTATE` case
+contains its own modifier check — `if (event.ctrlKey || event.metaKey ||
+event.shiftKey) { ...pan... }` — so reactively remapping
+`mouseButtons.LEFT` to `ROTATE` whenever Shift was held caused the library's
+own Shift-check to immediately convert that request back to pan, silently
+canceling the intended orbit. Fixed by no longer touching `mouseButtons.LEFT`
+for Shift at all: left at its base value (`MOUSE.PAN`), Shift+left-drag now
+orbits via `OrbitControls`' own native `MOUSE.PAN`-case Shift conversion —
+which requires no code of ours at all. Alt remains explicitly remapped, since
+`OrbitControls` does not special-case Alt.
+
+**BUG-02 (high) — sub-threshold pointer wobble still moved the camera.**
+Confirmed: `OrbitControls` has no minimum-drag concept and begins
+accumulating pan from the first pixel of pointer movement once `state ===
+PAN`; the ported `CLICK_DRAG_THRESHOLD_PX` check only gated whether the
+*subsequent click* triggered entity selection, not whether the drag itself
+produced camera movement. Fixed by snapshotting camera position/target on
+`pointerdown` and, when the completed gesture classifies as a click (see
+BUG-03), reverting to that snapshot before processing the click — undoing
+whatever the library had already applied.
+
+**BUG-03 (high) — a drag exceeding the threshold and returning near its start
+was misclassified as a click.** Confirmed: `isClickNotDrag` compared only
+the gesture's final start/end distance. Fixed by tracking a *sticky*
+`dragExceeded` flag via a new `pointermove` listener
+(`updateDragExceededThreshold`, unit-tested for exactly this
+out-then-return case) — once a gesture crosses the threshold it stays
+classified as a drag for the rest of that gesture, matching Parable's own
+`_press_kind` state machine (`hand_input.gd`), which is sticky in the same
+way.
+
+**BUG-04 (high) — blur mid-drag could permanently wedge mouse input.**
+Confirmed, and worse than reported: `OrbitControls.onPointerDown` checks
+`if (this._isTrackingPointer(event)) return;` *before* calling
+`_onMouseDown` — if the blur handler only forced `state = -1` without
+removing the stale pointer id from the library's own `_pointers` array (via
+its private `_onPointerUp`), the *next* pointerdown with the same id (a
+mouse reuses one pointerId for its whole browser session) would be silently
+swallowed with no camera response at all, not merely misbehave. Fixed by
+tracking the active `pointerId` ourselves and, on blur/visibility-hidden/
+pointerleave, invoking `OrbitControls`' own bound `_onPointerUp` with a
+synthetic `{ pointerId }` — delegating to the library's real cleanup path
+(releases pointer capture, removes its own document-level listeners, empties
+`_pointers`) instead of reimplementing a partial version of it.
+
+**BUG-05 (medium) — focus loss stopped new input but not already-accumulated
+damped momentum, and had no mouse-exit-the-surface parity with Parable.**
+Confirmed on both counts. `enableDamping` decays `_sphericalDelta` (orbit)
+and `_panOffset` (pan) by a fixed fraction *per `update()` call*, not
+resetting them — cancelling new input doesn't stop that decay from
+continuing to move the camera for a few more frames. Fixed by zeroing both
+accumulators directly as part of the same cancellation path used for BUG-04.
+Parable's `world.gd` also clears transient input on
+`NOTIFICATION_WM_MOUSE_EXIT`, not only window-focus-loss; a `pointerleave`
+listener on the canvas was added, scoped to cancelling an in-progress pointer
+drag only (not clearing held keyboard actions, which have no "mouse left the
+canvas" analog in Parable — Q/E/W/S are independent of pointer position, and
+clearing them on mere mouse-leave would stop a legitimately-held key the
+instant the user's mouse drifted off the map for an unrelated reason).
+
+**BUG-06 (medium) — keyboard camera shortcuts fired while an unrelated button
+had focus.** Confirmed: `shouldSuppressCameraKeys` denylisted specific
+elements (text inputs, the Inspector) rather than scoping activation to an
+appropriate map-control context, as the original task explicitly required.
+Fixed by extending the check to suppress for any `BUTTON`/`A`/`[tabindex]`/
+`[role="button"]` element, not just Inspector-scoped ones — the concrete
+example cited (pressing Q while a toolbar button has focus) is now covered.
+
+**Not implemented as separately-flagged items (already correct or out of
+proportionate scope), with reasoning:**
+- The review's suggested fix for BUG-02/03 (a full `pending`/`click`/`pan`
+  application-owned gesture state machine that defers ever starting
+  `OrbitControls`' own pan) was considered and not implemented in that exact
+  form: it requires either disabling `controls.enabled` before pointerdown
+  (which causes `OrbitControls` to silently ignore that pointerdown
+  entirely, breaking the gesture even after re-enabling) or dynamically
+  reconfiguring `mouseButtons.LEFT` at down-time in a way that conflicts with
+  the native Shift-conversion BUG-01's fix depends on. The snapshot-and-revert
+  approach implemented instead achieves the same observable outcome — a click
+  produces zero net camera movement — without either risk, and is
+  additionally unit- and browser-tested to confirm it.
+- Right-button pan (not itself flagged as a numbered bug, listed under
+  "suspected risks requiring runtime verification") was already documented
+  as a deliberate, bounded choice in this file's contract table before this
+  review: Parable's right mouse button has no camera meaning at all (it's the
+  "grab/carry" hand gameplay, with no CCE analog), so CCE's pre-existing
+  default right-button-pans-too behavior was left untouched rather than
+  invented or removed, matching "do not invent controls Parable does not
+  have" without also silently changing unrelated pre-existing behavior.
+- "Manual input during an active reset may fight the reset glide" (listed as
+  a suspected risk, not a numbered bug) was not separately investigated:
+  `resetActive` and `heldCameraActions` are mutually exclusive in the
+  animation loop's branch structure (`if (resetActive) {...} else if
+  (heldCameraActions.size > 0) {...}`), and `R`'s own keydown handler clears
+  `heldCameraActions` when triggering a reset — a user pressing a movement
+  key *during* an in-progress reset glide would have that key silently
+  ignored until the glide completes (`resetActive` takes priority every
+  frame), which is inert-but-safe rather than a fight; not pursued further as
+  disproportionate to this bounded closure pass.
+
+**A deeper root cause surfaced while proving BUG-02's fix under real-world
+timing.** The initial snapshot-and-revert fix (copying `camera.position`/
+`controls.target` back on a classified click) passed in isolated runs but
+intermittently failed when run late in a long sequential suite. The cause was
+generalizable, not merely more environmental noise: reverting position/target
+alone does not touch OrbitControls' own pending `_sphericalDelta`/
+`_panOffset` accumulators, so whatever fraction of the pre-revert pan hadn't
+been damped-applied yet re-appears, partially undoing the revert, on the very
+next frame(s). Under light load the residual was small enough to stay under
+the test's tolerance; under heavier load (a longer real gesture accumulates
+more before release) it wasn't. Fixed by extracting a shared
+`zeroDampingAccumulators()` helper — zeroing both accumulators directly —
+used by both the click-revert path and the existing blur/mouseleave
+cancellation path (`cancelActivePointerDrag`), rather than two independent,
+partial implementations of the same fix.
+
+**Test-suite weight.** Adding the bug-sweep regression coverage as its own
+Playwright test (a fourth baseline-simulation-paying test in
+`camera-controls.spec.ts`, on top of the two from the original port) pushed
+total sequential suite weight past what this session had already established
+this environment reliably sustains — an unrelated, untouched test later in
+the file sequence (`ui-polish.spec.ts`) timed out waiting on a branch
+resimulation it had no trouble with in a shorter run. Resolved the same way
+the original port resolved an identical issue: merged the new coverage into
+the existing consolidated test rather than leaving it standalone, restoring
+`camera-controls.spec.ts` to two tests total.
+
+**Two keyboard-timing assertions were also hardened**, independent of the six
+numbered bugs: (a) all keyboard-hold windows in the main test were widened
+from 250ms to 400ms, and (b) the "opposite keys cancel" check was redesigned
+to measure steady-state position while both keys are already confirmed held,
+rather than comparing the fully-released end state back to the state from
+*before* either key went down — `page.keyboard.down("KeyQ")` and
+`down("KeyE")` are two separate, sequentially-awaited CDP round-trips, and
+this environment's frame-rate variance can occasionally widen the real gap
+between them enough for genuine, uncancelled orbit to accumulate during the
+Q-only window, which a before/after check spanning that window would
+misattribute to a cancellation failure.
+
+**Evidence:** `tests/e2e/camera-controls.spec.ts`'s main test exercises all
+six fixes end-to-end in a real browser; the fixed
+`shouldSuppressCameraKeys`/`updateDragExceededThreshold` logic has direct
+Vitest coverage (36 tests, `src/__tests__/cameraControls.test.ts`). The
+complete 8-test Playwright suite passed cleanly and uninterrupted: **8/8
+passed, 21.4 minutes**, zero page/console errors. Full Vitest: **110/110
+passed**. Lint and build both clean.

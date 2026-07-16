@@ -8,7 +8,7 @@ import {
   mapKeyToCameraAction,
   computeCameraFrameDeltas,
   shouldSuppressCameraKeys,
-  isClickNotDrag,
+  updateDragExceededThreshold,
   type CameraKeyAction,
 } from "./cameraControls";
 
@@ -175,17 +175,87 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     // Ported click-vs-drag disambiguation (Parable's hand_input.gd
     // CLICK_DRAG_THRESHOLD_PX, see docs/PARABLE_CONTROL_PORT.md): now that
     // left-drag pans the camera, a pan gesture's mouseup must not also
-    // register as an entity-selection click.
+    // register as an entity-selection click. dragExceeded is a *sticky* flag
+    // updated on every pointermove (not just checked against the final
+    // release point) — a large drag that curls back near its start before
+    // release must still count as a drag, not a click. preDragSnapshot lets
+    // a genuine click revert any tiny pan OrbitControls' own damping applied
+    // from sub-threshold pointer wobble between press and release.
     let pointerDownPos: { x: number; y: number } | null = null;
+    let activePointerId: number | null = null;
+    let dragExceeded = false;
+    let preDragSnapshot: { position: THREE.Vector3; target: THREE.Vector3 } | null = null;
+
     const handlePointerDown = (event: PointerEvent) => {
       pointerDownPos = { x: event.clientX, y: event.clientY };
+      activePointerId = event.pointerId;
+      dragExceeded = false;
+      preDragSnapshot = { position: camera.position.clone(), target: controls.target.clone() };
     };
     renderer.domElement.addEventListener("pointerdown", handlePointerDown);
 
-    const handleClick = (event: MouseEvent) => {
-      const downPos = pointerDownPos;
+    // enableDamping means OrbitControls only applies a fraction
+    // (dampingFactor) of its accumulated _sphericalDelta/_panOffset per
+    // update() call, not the whole thing at once — the remainder stays
+    // queued and keeps getting (partially) applied on subsequent frames.
+    // Copying camera.position/controls.target back to a snapshot is not
+    // enough on its own: whatever hadn't been applied yet re-appears on the
+    // very next frame(s), partially re-introducing the movement that was
+    // just reverted. Not part of the public .d.ts, hence the narrow cast.
+    const zeroDampingAccumulators = () => {
+      const internals = controls as unknown as {
+        _sphericalDelta: { theta: number; phi: number };
+        _panOffset: THREE.Vector3;
+      };
+      internals._sphericalDelta.theta = 0;
+      internals._sphericalDelta.phi = 0;
+      internals._panOffset.set(0, 0, 0);
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (!pointerDownPos || event.pointerId !== activePointerId) return;
+      dragExceeded = updateDragExceededThreshold(pointerDownPos.x, pointerDownPos.y, event.clientX, event.clientY, dragExceeded);
+    };
+    renderer.domElement.addEventListener("pointermove", handlePointerMove);
+
+    const clearPointerGestureState = () => {
       pointerDownPos = null;
-      if (downPos && !isClickNotDrag(downPos.x, downPos.y, event.clientX, event.clientY)) return;
+      activePointerId = null;
+      dragExceeded = false;
+      preDragSnapshot = null;
+    };
+    // Pointer release tracked at the window level (not just the canvas) so a
+    // drag that ends outside the canvas still clears activePointerId — a
+    // stale pointerId here is exactly what causes the blur/mouseleave
+    // cancellation below to target the wrong (already-released) pointer.
+    // Deliberately narrower than clearPointerGestureState: native pointerup
+    // always fires *before* click for a completed in-canvas gesture, so
+    // clearing dragExceeded/preDragSnapshot here would erase them before
+    // handleClick (below) gets to read them — the click-vs-drag classifier
+    // and the sub-threshold-wobble revert would silently stop working.
+    // handleClick owns clearing the rest, once it's done with them.
+    const clearActivePointerId = () => {
+      activePointerId = null;
+    };
+    window.addEventListener("pointerup", clearActivePointerId);
+    window.addEventListener("pointercancel", clearActivePointerId);
+
+    const handleClick = (event: MouseEvent) => {
+      const wasDrag = dragExceeded;
+      if (!wasDrag && preDragSnapshot) {
+        // A genuine click: undo any tiny pan OrbitControls' own damping
+        // already applied to camera position/target from sub-threshold
+        // pointer movement between press and release, matching Parable's
+        // own click gesture producing zero camera movement. Also zero the
+        // pending damping accumulators themselves — otherwise whatever
+        // hadn't been applied yet re-appears on the next frame(s), partially
+        // undoing this revert (see zeroDampingAccumulators above).
+        camera.position.copy(preDragSnapshot.position);
+        controls.target.copy(preDragSnapshot.target);
+        zeroDampingAccumulators();
+      }
+      clearPointerGestureState();
+      if (wasDrag) return;
       if (!containerRef.current || !cameraRef.current || !rendererRef.current) return;
       const rect = rendererRef.current.domElement.getBoundingClientRect();
       mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -225,7 +295,16 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     let resetActive = false;
 
     const syncOrbitModifier = (event: KeyboardEvent) => {
-      controls.mouseButtons.LEFT = event.shiftKey || event.altKey ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+      // Only Alt is remapped here. OrbitControls' own onMouseDown dispatch
+      // already special-cases Shift (and Ctrl/Meta): when the configured
+      // action is MOUSE.PAN and Shift is held, it natively switches to
+      // rotate for that gesture — giving Parable's Shift+left-drag-orbits
+      // behavior for free. Reactively setting LEFT to MOUSE.ROTATE for
+      // Shift here would collide with that native check: OrbitControls'
+      // MOUSE.ROTATE case *also* special-cases Shift, converting it back to
+      // pan, silently canceling the intended orbit. Alt is not natively
+      // special-cased, so it's the only modifier this needs to override.
+      controls.mouseButtons.LEFT = event.altKey ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -251,26 +330,66 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
 
+    // Cancels an in-progress pointer drag (orbit or pan) through
+    // OrbitControls' own real pointer-up path — not just resetting `state`.
+    // OrbitControls tracks the active pointer in a private `_pointers` array
+    // and only clears it via its bound _onPointerUp handler (which also
+    // releases pointer capture and removes its own document-level listeners).
+    // Skipping that and only forcing `state = -1` leaves the pointer id in
+    // `_pointers`; the *next* real pointerdown with the same id (the mouse
+    // reuses pointerId 1 for its whole session in every major browser) is
+    // then silently swallowed by OrbitControls' onPointerDown
+    // (`_isTrackingPointer` short-circuits before `_onMouseDown` ever runs),
+    // permanently breaking mouse-driven camera control until reload. Calling
+    // the library's own handler guarantees its internal bookkeeping is
+    // cleared exactly as it would be for a real release. Not part of the
+    // public .d.ts, hence the narrow casts.
+    const cancelActivePointerDrag = () => {
+      if (activePointerId !== null) {
+        (controls as unknown as { _onPointerUp: (e: { pointerId: number }) => void })
+          ._onPointerUp({ pointerId: activePointerId });
+      }
+      // Defensive fallback in case some path leaves state non-NONE without
+      // an active pointer id (_onPointerUp above already does this when a
+      // pointer was active).
+      (controls as unknown as { state: number }).state = -1;
+      // enableDamping means a completed drag keeps "coasting" otherwise —
+      // see zeroDampingAccumulators above.
+      zeroDampingAccumulators();
+      controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+      // A cancelled drag must not be reclassified as a click if a stray
+      // click event still arrives afterward (e.g. the button is released,
+      // dispatching mouseup/click, immediately after this cancellation runs
+      // on blur) — mark it as "was a drag" rather than resetting to the
+      // fresh/click-eligible state clearPointerGestureState would produce.
+      dragExceeded = true;
+      preDragSnapshot = null;
+      pointerDownPos = null;
+      activePointerId = null;
+    };
+
     // Ported focus-loss contract (Parable's world.gd _notification handler:
-    // window blur / mouse-exit clears in-progress orbit and any held-key
-    // state without moving the camera; refocus never resumes a drag — see
+    // window blur clears held keys and any in-progress orbit/pan without
+    // moving the camera; refocus never resumes a drag — see
     // docs/PARABLE_CONTROL_PORT.md).
     const clearTransientCameraInput = () => {
       heldCameraActions.clear();
-      controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
-      pointerDownPos = null;
-      // OrbitControls has no public "cancel active drag" method; resetting
-      // its own interaction-state field is the standard, minimal way to stop
-      // a drag that will never receive its matching pointerup (e.g. the
-      // button was released in a different window after an alt-tab). Not
-      // part of the public .d.ts, hence the narrow cast.
-      (controls as unknown as { state: number }).state = -1;
+      cancelActivePointerDrag();
     };
     window.addEventListener("blur", clearTransientCameraInput);
     const handleVisibilityChange = () => {
       if (document.hidden) clearTransientCameraInput();
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    // Parable's world.gd also clears transient input on
+    // NOTIFICATION_WM_MOUSE_EXIT (the mouse leaving the game surface), not
+    // only on window focus loss. This is scoped to cancelling an in-progress
+    // pointer drag only — not clearing held keyboard actions, which have no
+    // "mouse left the canvas" analog in Parable (Q/E/W/S are independent of
+    // pointer position) and would otherwise stop unexpectedly if the user
+    // holds a key while glancing at another part of the page.
+    renderer.domElement.addEventListener("pointerleave", cancelActivePointerDrag);
 
     triggerResetRef.current = () => {
       resetActive = true;
@@ -404,6 +523,8 @@ export const MapViewer: React.FC<MapViewerProps> = ({
           cameraResetActive: resetActive,
           cameraControlsEnabled: controlsRef.current?.enabled ?? false,
           cameraMouseButtonLeft: controls.mouseButtons.LEFT,
+          cameraActivePointerId: activePointerId,
+          cameraDragExceeded: dragExceeded,
         };
       };
     }
@@ -413,10 +534,14 @@ export const MapViewer: React.FC<MapViewerProps> = ({
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", clearTransientCameraInput);
+      window.removeEventListener("pointerup", clearActivePointerId);
+      window.removeEventListener("pointercancel", clearActivePointerId);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       triggerResetRef.current = () => {};
       if (rendererRef.current) {
         rendererRef.current.domElement.removeEventListener("pointerdown", handlePointerDown);
+        rendererRef.current.domElement.removeEventListener("pointermove", handlePointerMove);
+        rendererRef.current.domElement.removeEventListener("pointerleave", cancelActivePointerDrag);
         rendererRef.current.domElement.removeEventListener("click", handleClick);
         rendererRef.current.dispose();
       }
