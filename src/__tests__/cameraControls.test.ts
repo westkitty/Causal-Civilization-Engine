@@ -9,6 +9,7 @@ import {
   CAMERA_KEY_ORBIT_RATE,
   CAMERA_KEY_PITCH_RATE,
   CLICK_DRAG_THRESHOLD_PX,
+  MAP_KEYBOARD_REGION_ATTR,
 } from "../rendering/cameraControls";
 
 describe("mapKeyToCameraAction", () => {
@@ -228,5 +229,110 @@ describe("shouldSuppressCameraKeys", () => {
 
   it("does not suppress for a null or non-element target", () => {
     expect(shouldSuppressCameraKeys(null)).toBe(false);
+  });
+});
+
+// Positive map-focus activation (docs/PARABLE_CONTROL_PORT.md): the map
+// wrapper itself now carries a tabindex so it can receive focus (see
+// MapViewer.tsx), which would otherwise be caught by the generic
+// "any tabindex-bearing element is suppressed" rule above. These scenarios
+// cover the DOM-shape half of that fix (the pure, unit-testable half); the
+// live focus/blur state machine that actually flips shortcuts on and off is
+// covered in tests/e2e/camera-controls.spec.ts, since it depends on real
+// browser focus events MapViewer.tsx's mount-once effect owns internally.
+describe("shouldSuppressCameraKeys: map keyboard region exemption", () => {
+  function makeMapRegion(): HTMLDivElement {
+    const div = document.createElement("div");
+    div.className = "map-canvas";
+    div.tabIndex = 0;
+    div.setAttribute(MAP_KEYBOARD_REGION_ATTR, "true");
+    document.body.appendChild(div);
+    return div;
+  }
+
+  it("does not suppress the map keyboard region itself, despite its tabindex", () => {
+    const region = makeMapRegion();
+    expect(shouldSuppressCameraKeys(region)).toBe(false);
+    document.body.removeChild(region);
+  });
+
+  it("does not suppress a plain, non-interactive descendant of the map region", () => {
+    const region = makeMapRegion();
+    const child = document.createElement("span");
+    region.appendChild(child);
+    expect(shouldSuppressCameraKeys(child)).toBe(false);
+    document.body.removeChild(region);
+  });
+
+  it("still suppresses an ordinary tabindex-bearing element that is not the map region", () => {
+    // Regression guard: the exemption above must be scoped to the map
+    // region specifically, not loosen the general tabindex rule for
+    // everything else (a custom divider, a card, etc.).
+    const div = document.createElement("div");
+    div.tabIndex = 0;
+    document.body.appendChild(div);
+    expect(shouldSuppressCameraKeys(div)).toBe(true);
+    document.body.removeChild(div);
+  });
+
+  it("still suppresses an input nested inside the map region (defense-in-depth preserved)", () => {
+    const region = makeMapRegion();
+    const input = document.createElement("input");
+    input.type = "text";
+    region.appendChild(input);
+    expect(shouldSuppressCameraKeys(input)).toBe(true);
+    document.body.removeChild(region);
+  });
+
+  it("still suppresses a button nested inside the map region (defense-in-depth preserved)", () => {
+    const region = makeMapRegion();
+    const button = document.createElement("button");
+    region.appendChild(button);
+    expect(shouldSuppressCameraKeys(button)).toBe(true);
+    document.body.removeChild(region);
+  });
+
+  it("still suppresses the Inspector even though it is unrelated to the map region", () => {
+    const aside = document.createElement("aside");
+    aside.className = "inspector inspector--selected";
+    document.body.appendChild(aside);
+    expect(shouldSuppressCameraKeys(aside)).toBe(true);
+    document.body.removeChild(aside);
+  });
+
+  it("does not suppress a sibling of the map region that merely happens to share its parent", () => {
+    const wrapper = document.createElement("div");
+    const region = document.createElement("div");
+    region.tabIndex = 0;
+    region.setAttribute(MAP_KEYBOARD_REGION_ATTR, "true");
+    const sibling = document.createElement("div");
+    sibling.tabIndex = 0;
+    wrapper.appendChild(region);
+    wrapper.appendChild(sibling);
+    document.body.appendChild(wrapper);
+    expect(shouldSuppressCameraKeys(sibling)).toBe(true);
+    expect(shouldSuppressCameraKeys(region)).toBe(false);
+    document.body.removeChild(wrapper);
+  });
+
+  it("does not suppress the map region even with an empty attribute value", () => {
+    // closest() matches on attribute presence, not its exact string value —
+    // React renders it as "true", but the exemption must not be brittle to
+    // that specific value.
+    const div = document.createElement("div");
+    div.tabIndex = 0;
+    div.setAttribute(MAP_KEYBOARD_REGION_ATTR, "");
+    document.body.appendChild(div);
+    expect(shouldSuppressCameraKeys(div)).toBe(false);
+    document.body.removeChild(div);
+  });
+
+  it("suppression order is independent: a descendant of the map region that is itself a link is still suppressed", () => {
+    const region = makeMapRegion();
+    const link = document.createElement("a");
+    link.href = "#";
+    region.appendChild(link);
+    expect(shouldSuppressCameraKeys(link)).toBe(true);
+    document.body.removeChild(region);
   });
 });

@@ -14,7 +14,18 @@ interface CameraDiag {
   cameraMouseButtonLeft: number;
   cameraActivePointerId: number | null;
   cameraDragExceeded: boolean;
+  cameraMapKeyboardActive: boolean;
   drawCalls: number;
+}
+
+// The map wrapper is the positive keyboard-activation boundary (see
+// docs/PARABLE_CONTROL_PORT.md): clicking directly on the canvas is a
+// deliberate pointer interaction with the map and both moves the camera (for
+// a drag) and activates its keyboard-shortcut context as a side effect of
+// MapViewer's own pointerdown handler — the same click most scenarios below
+// already perform for panning/orbiting/selecting doubles as map-focus setup.
+async function activateMapKeyboard(page: Page, cx: number, cy: number) {
+  await page.mouse.click(cx, cy);
 }
 
 function attachErrorCollectors(page: Page) {
@@ -92,6 +103,18 @@ test("ported Parable camera controls: pan, orbit, zoom, keyboard, reset, and inp
   const initialPos = initial.cameraPosition!;
   const initialTarget = initial.cameraTarget!;
 
+  // Positive map-focus activation model, part 1 (see docs/PARABLE_CONTROL_PORT.md):
+  // on a fresh load, nothing has focused the map yet, so keyboard shortcuts
+  // must be completely inert — pressing Q must do nothing at all, not merely
+  // "do nothing because the seed field happens to be focused".
+  expect(initial.cameraMapKeyboardActive).toBe(false);
+  await page.keyboard.down("KeyQ");
+  await page.waitForTimeout(200);
+  await page.keyboard.up("KeyQ");
+  const afterInertQ = await diag(page);
+  expect(dist(afterInertQ.cameraPosition!, initialPos)).toBeLessThan(0.01);
+  expect(afterInertQ.cameraHeldActions).toHaveLength(0);
+
   const canvas = page.locator("canvas");
   const box = (await canvas.boundingBox())!;
   const cx = box.x + box.width / 2;
@@ -164,7 +187,13 @@ test("ported Parable camera controls: pan, orbit, zoom, keyboard, reset, and inp
 
   // 2/3. Each keyboard binding moves the camera in the expected direction
   // while held, and stops changing it once released (no continued drift).
-  await page.locator("body").click({ position: { x: 10, y: 10 } }); // ensure no input has focus
+  // Activates the map's positive keyboard-focus context (see
+  // docs/PARABLE_CONTROL_PORT.md) rather than the old plain body-click: that
+  // still lands on empty ground (deselecting, same as before) but a body
+  // click no longer also happens to leave shortcuts live — under the
+  // positive activation model a click that *doesn't* land on the map wrapper
+  // would deactivate it instead.
+  await activateMapKeyboard(page, cx, cy);
   const beforeQ = await waitForCameraSettled(page);
   await page.keyboard.down("KeyQ");
   await page.waitForTimeout(400);
@@ -289,11 +318,12 @@ test("ported Parable camera controls: pan, orbit, zoom, keyboard, reset, and inp
   // function, since MapViewer is never conditionally unmounted in this app's
   // actual render tree).
   //
-  // The timeline range input above still has focus — blur it first, or
-  // shouldSuppressCameraKeys will (correctly, by design) suppress every
-  // keyboard camera action below for the same reason it must suppress them
-  // while the seed field is focused.
-  await page.locator("body").click({ position: { x: 10, y: 10 } });
+  // The timeline range input above still has focus. Under the positive
+  // activation model a plain body click would just leave the map inactive
+  // (rather than the old model, where it merely needed to avoid landing on
+  // an input) — re-activate the map itself so the keyboard scenarios below
+  // have a live context to move.
+  await activateMapKeyboard(page, cx, cy);
   await waitForCameraSettled(page);
 
   // Opposite keys held simultaneously cancel out (no crash, no net drift).
@@ -342,17 +372,39 @@ test("ported Parable camera controls: pan, orbit, zoom, keyboard, reset, and inp
   await page.waitForTimeout(100);
   expect((await diag(page)).cameraHeldActions).toHaveLength(0);
 
-  // A key held while focus moves into the seed field must not stay "held"
-  // (shouldSuppressCameraKeys only gates *new* keydowns; a key already down
-  // when focus moves must not silently keep driving the camera forever).
-  await page.locator("body").click({ position: { x: 10, y: 10 } });
+  // A key held while focus moves away from the map must stop the camera
+  // *immediately* — the map wrapper's own "blur" handler clears held actions
+  // the instant DOM focus leaves it, rather than waiting for the eventual
+  // keyup (which may arrive much later, or with focus already elsewhere).
+  await activateMapKeyboard(page, cx, cy);
+  const beforeHeldFocusChange = await waitForCameraSettled(page);
   await page.keyboard.down("KeyQ");
-  await page.waitForTimeout(100);
+  // 400ms, not a shorter window — matches this file's established hold
+  // duration everywhere else (see the "keyboard-timing assertions" note
+  // above): this environment's software-rendered frame rate is slow and
+  // variable enough (~9 FPS) that a short hold can observe zero elapsed
+  // animation frames, which would misread as "shortcut didn't fire" rather
+  // than "no frame happened to run yet".
+  await page.waitForTimeout(400);
+  const midHold = await diag(page);
+  expect(midHold.cameraHeldActions).toContain("orbitLeft");
+  expect(dist(midHold.cameraPosition!, beforeHeldFocusChange.cameraPosition!)).toBeGreaterThan(0.01);
+  // Only clicks the seed field to move focus — deliberately does not type
+  // into it (see the scratch-input comment above): its onChange restarts the
+  // entire baseline simulation on every keystroke.
   const seedInput = page.getByLabel("Simulation seed");
   await seedInput.click();
-  await page.keyboard.up("KeyQ"); // keyup fires with the seed input focused
+  await page.waitForTimeout(50);
+  const rightAfterFocusChange = await diag(page);
+  expect(rightAfterFocusChange.cameraHeldActions).toHaveLength(0); // cleared on blur, before any keyup
+  expect(rightAfterFocusChange.cameraMapKeyboardActive).toBe(false);
+  await page.keyboard.up("KeyQ"); // keyup fires with the seed input focused; must remain a harmless no-op
   await page.waitForTimeout(100);
   expect((await diag(page)).cameraHeldActions).toHaveLength(0);
+  // Movement does not resume or drift on afterward — it stopped, not paused.
+  await page.waitForTimeout(300);
+  const stillAfter = await diag(page);
+  expect(dist(stillAfter.cameraPosition!, rightAfterFocusChange.cameraPosition!)).toBeLessThan(0.05);
   await page.locator("body").click({ position: { x: 10, y: 10 } });
 
   // Map movement during timeline playback does not crash or desync.
@@ -378,6 +430,23 @@ test("ported Parable camera controls: pan, orbit, zoom, keyboard, reset, and inp
   await page.waitForTimeout(300);
   await expect(page.locator("text=Settlement Node")).toBeVisible(); // drag didn't deselect
 
+  // Map keyboard shortcuts remain usable while the Inspector is open, as
+  // long as the map itself is focused — the Inspector is a separate
+  // focusable region (.inspector) that suppresses independently (see the
+  // "suppresses when focus is inside the Inspector panel" unit test), not by
+  // virtue of merely being open elsewhere on screen. The drag just above
+  // already focused the map as a side effect (its pointerdown), so no
+  // additional activation click is needed here — and a plain click would be
+  // actively wrong: landing on empty ground, it would deselect the entity
+  // and close the Inspector this scenario is specifically testing against.
+  const beforeInspectorKey = await waitForCameraSettled(page);
+  await page.keyboard.down("KeyE");
+  await page.waitForTimeout(400);
+  await page.keyboard.up("KeyE");
+  const afterInspectorKey = await waitForCameraSettled(page);
+  expect(dist(afterInspectorKey.cameraPosition!, beforeInspectorKey.cameraPosition!)).toBeGreaterThan(0.01);
+  await expect(page.locator("text=Settlement Node")).toBeVisible(); // Inspector stayed open throughout
+
   // Wheel zoom respects the minimum distance bound too (not just maximum,
   // covered in the main test).
   for (let i = 0; i < 6; i++) await page.mouse.wheel(0, -600);
@@ -385,6 +454,9 @@ test("ported Parable camera controls: pan, orbit, zoom, keyboard, reset, and inp
   expect(dist(afterZoomInLimit.cameraPosition!, afterZoomInLimit.cameraTarget!)).toBeGreaterThanOrEqual(9.5);
 
   // Viewport resize while a key is held does not crash or leave it stuck.
+  // The map is still focused from the Inspector-open scenario just above
+  // (wheel zoom doesn't move focus) — no reactivation click needed, and one
+  // would risk deselecting the still-open Inspector's entity for no reason.
   await page.keyboard.down("KeyQ");
   await page.setViewportSize({ width: 1000, height: 700 });
   await page.waitForTimeout(200);
@@ -546,6 +618,90 @@ test("ported Parable camera controls: pan, orbit, zoom, keyboard, reset, and inp
   const afterFocusedButtonKey = await diag(page);
   expect(dist(afterFocusedButtonKey.cameraPosition!, beforeFocusedButtonKey.cameraPosition!)).toBeLessThan(0.01);
   expect(afterFocusedButtonKey.cameraHeldActions).toHaveLength(0);
+  expect(afterFocusedButtonKey.cameraMapKeyboardActive).toBe(false);
+
+  // Positive map-focus activation model (Task 4, docs/PARABLE_CONTROL_PORT.md):
+  // shortcuts are inert unless the map wrapper itself has DOM focus, and
+  // that focus is only granted by a deliberate Tab or pointer interaction
+  // with the map — not merely "nothing else is focused". This replaces the
+  // denylist above as the *primary* gate (shouldSuppressCameraKeys, already
+  // exercised throughout this test, remains as a secondary check).
+
+  // Clicking a control other than the map does not activate it (regression
+  // guard: only the map wrapper's own pointerdown handler calls .focus()).
+  expect(await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).not.toBe(
+    "Interactive civilization map"
+  );
+
+  // Explicit pointer activation: clicking directly on the canvas focuses the
+  // map wrapper and turns shortcuts on.
+  await activateMapKeyboard(page, cx, cy);
+  expect(await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe(
+    "Interactive civilization map"
+  );
+  expect((await diag(page)).cameraMapKeyboardActive).toBe(true);
+  const beforePointerActivatedE = await waitForCameraSettled(page);
+  await page.keyboard.down("KeyE");
+  await page.waitForTimeout(400);
+  await page.keyboard.up("KeyE");
+  const afterPointerActivatedE = await waitForCameraSettled(page);
+  expect(dist(afterPointerActivatedE.cameraPosition!, beforePointerActivatedE.cameraPosition!)).toBeGreaterThan(0.01);
+
+  // Visible focus indication while active (reuses --color-focus, as an inset
+  // box-shadow rather than the app-wide outline since .map-stage clips
+  // overflow — see index.css).
+  const mapHasVisibleFocusRing = await page.evaluate(() => {
+    const el = document.querySelector(".map-canvas") as HTMLElement | null;
+    if (!el || document.activeElement !== el) return false;
+    return getComputedStyle(el).boxShadow !== "none";
+  });
+  expect(mapHasVisibleFocusRing).toBe(true);
+
+  // Moving focus to another control deactivates the map immediately.
+  await playButton.focus();
+  expect((await diag(page)).cameraMapKeyboardActive).toBe(false);
+  const noRingWhenInactive = await page.evaluate(() => {
+    const el = document.querySelector(".map-canvas") as HTMLElement | null;
+    return el ? getComputedStyle(el).boxShadow === "none" : true;
+  });
+  expect(noRingWhenInactive).toBe(true);
+
+  // Keyboard-only activation: Tab reaches the map and turns shortcuts back
+  // on, without ever touching the mouse.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  let reachedMap = false;
+  for (let i = 0; i < 20 && !reachedMap; i++) {
+    await page.keyboard.press("Tab");
+    reachedMap = await page.evaluate(
+      () => document.activeElement?.getAttribute("aria-label") === "Interactive civilization map"
+    );
+  }
+  expect(reachedMap).toBe(true);
+  expect((await diag(page)).cameraMapKeyboardActive).toBe(true);
+  const beforeTabActivatedW = await waitForCameraSettled(page);
+  await page.keyboard.down("KeyW");
+  await page.waitForTimeout(400);
+  await page.keyboard.up("KeyW");
+  const afterTabActivatedW = await waitForCameraSettled(page);
+  expect(dist(afterTabActivatedW.cameraPosition!, beforeTabActivatedW.cameraPosition!)).toBeGreaterThan(0.01);
+
+  // Space/Enter on a focused button remain entirely native — they are not
+  // part of the ported camera-key set and must be unaffected by any of the
+  // above (the Play/Pause toggle is a plain <button>, activated the normal
+  // way regardless of the map's own focus state).
+  await playButton.focus();
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
+
+  // Reactivating the map after this whole sequence still works cleanly (no
+  // stuck "can only activate once" state).
+  await activateMapKeyboard(page, cx, cy);
+  expect((await diag(page)).cameraMapKeyboardActive).toBe(true);
+  await page.keyboard.down("KeyR");
+  await page.keyboard.up("KeyR");
+  await waitForCameraSettled(page);
   await page.locator("body").click({ position: { x: 10, y: 10 } });
 
   expect(errs.pageErrors, errs.pageErrors.join("\n")).toEqual([]);
@@ -592,6 +748,12 @@ test("narrow viewport with reduced motion: pan, tray, and an instant (non-glidin
   await page.mouse.up({ button: "left" });
   const afterTrayDrag = await waitForCameraSettled(page);
   expect(dist(afterTrayDrag.cameraTarget!, beforeTrayDrag.cameraTarget!)).toBeGreaterThan(0.1);
+
+  // Positive map-focus activation is available at this narrow width too —
+  // the map wrapper's tabindex/focus handling has no layout-dependent CSS
+  // gating it (unlike the mobile-only tray toggle above), so the drag just
+  // performed left the map focused and shortcuts live.
+  expect((await diag(page)).cameraMapKeyboardActive).toBe(true);
 
   // A reduced-motion reset resolves on the very next frame, not over a
   // multi-hundred-millisecond glide — a short fixed wait is appropriate here

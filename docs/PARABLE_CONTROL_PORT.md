@@ -542,3 +542,156 @@ Vitest coverage (36 tests, `src/__tests__/cameraControls.test.ts`). The
 complete 8-test Playwright suite passed cleanly and uninterrupted: **8/8
 passed, 21.4 minutes**, zero page/console errors. Full Vitest: **110/110
 passed**. Lint and build both clean.
+
+## Task 4: Positive map-focus keyboard activation (2026-07-16)
+
+**The remaining defect.** Even after BUG-06's fix above, camera keyboard
+shortcuts (Q/E/W/S/=/+/NumpadAdd/-/NumpadSubtract/R) were attached to
+`window`'s `keydown`/`keyup` and gated only by `shouldSuppressCameraKeys` — a
+**denylist**: suppress when specific elements (inputs, buttons, links,
+anything with a `tabindex`, the Inspector) are focused. Everywhere *else* —
+including `document.body`, i.e. the page's default state before the user has
+interacted with anything — the shortcuts were live. A user could press Q the
+moment the page finished loading, never having touched the map, and the
+camera would move.
+
+**The fix: positive activation, not an expanded denylist.** The map's own
+wrapper element (`.map-canvas`, `containerRef` in `MapViewer.tsx`) now
+carries `tabIndex={0}` and a `data-camera-keyboard-region` marker attribute
+(`MAP_KEYBOARD_REGION_ATTR` in `cameraControls.ts`). A plain closure flag,
+`mapKeyboardActive` (not React state — focus changes must never trigger a
+re-render), is set `true` by that element's own `focus` event and `false` by
+its own `blur` event; nothing else in `MapViewer.tsx` touches it. Shortcuts
+are only processed in `handleKeyDown` while `mapKeyboardActive` is true —
+`shouldSuppressCameraKeys` remains as a secondary, defense-in-depth check for
+whatever ends up focused *inside* an active map context, exactly as before,
+but is no longer the primary gate.
+
+Two ways the map wrapper gains focus, both deliberate:
+- **Tab.** Standard browser focus traversal reaches it like any other
+  `tabIndex={0}` element — no extra wiring needed.
+- **Pointer interaction.** `handlePointerDown` (the same handler that already
+  starts every pan/orbit gesture and click-vs-drag snapshot) calls
+  `containerRef.current?.focus({ preventScroll: true })`. The `<canvas>`
+  itself is never focusable, so this is what turns "the user just started
+  dragging or clicking the map" into "the map now has keyboard focus" —
+  pointer and keyboard activation share one entry point rather than being two
+  independently-maintained paths.
+
+Losing focus is symmetric and immediate: moving focus to *any* other element
+— the seed field, a toolbar button, a timeline/divider slider, an Inspector
+control, or simply clicking empty space that isn't the map (which reverts
+`document.activeElement` to `document.body`) — fires the wrapper's own
+`blur`, which sets `mapKeyboardActive = false` **and clears
+`heldCameraActions` immediately**, in the same tick, before any keyup can
+arrive. This matters for a key already held when focus moves: the camera
+stops the instant focus leaves, not on whatever later keyup eventually fires
+(which may arrive with focus already somewhere else entirely).
+`handleKeyUp` itself remains deliberately ungated by `mapKeyboardActive` /
+`shouldSuppressCameraKeys` — it must still clear a held action wherever focus
+has moved to, as a second line of defense on top of the blur-triggered clear.
+
+`syncOrbitModifier` (the Alt-drag-orbit mouse-button remap) is called
+unconditionally at the top of both `handleKeyDown` and `handleKeyUp`, *before*
+the `mapKeyboardActive` check — it primes which mouse button orbits on the
+*next* pointer drag, a pointer behavior explicitly required to stay
+unaffected by the keyboard-activation gate. Native Shift-drag-orbit,
+Alt-drag-orbit, plain drag-pan, middle-drag-orbit, and wheel zoom are all
+pointer-only code paths untouched by any of this.
+
+**Why the denylist needed a carve-out, not just a supplement.** Adding
+`tabIndex={0}` to the map wrapper made it match `shouldSuppressCameraKeys`'s
+own `[tabindex]` catch-all rule — which would have suppressed the map's
+shortcuts *while the map itself was legitimately focused*, silently
+defeating the whole fix. `shouldSuppressCameraKeys` now special-cases any
+element inside `[data-camera-keyboard-region]`: it is exempted from the
+generic tabindex rule specifically, while every other suppression rule
+(input/textarea/select/button/a/contenteditable/`.inspector`) still applies
+unconditionally, in case a future descendant inside the map region needs it.
+
+**Visible focus indication.** `.map-canvas:focus` gets an inset `box-shadow`
+using the same `--color-focus` token and 3px weight as the app-wide
+`:focus-visible` rule in `src/index.css`, but as an *inset* shadow rather
+than an outward `outline`: `.map-stage` clips overflow and `.map-canvas`
+fills it edge-to-edge, so an outline pushed outward by `outline-offset` would
+be clipped away on every side. Plain `:focus` rather than `:focus-visible`
+deliberately: the ring signals "shortcuts are live right now" regardless of
+whether the map was focused by mouse or keyboard, and Chromium's
+`:focus-visible` heuristic generally suppresses the ring for mouse-originated
+focus on a plain, non-form focusable element — which would make the
+indicator invisible for the pointer-activation path, the more common of the
+two.
+
+**Centralizing OrbitControls' private-field access
+(`src/rendering/orbitControlsAdapter.ts`).** Before this pass,
+`_sphericalDelta`/`_panOffset` (damping accumulators) and `_onPointerUp`/
+`state` (pointer-drag cancellation) were each reached into directly at three
+separate call sites in `MapViewer.tsx`. All access is now behind three
+functions in one module: `zeroOrbitControlsDamping`, `cancelOrbitControlsPointer`,
+and `detectOrbitControlsPrivateShape`. Each checks a field's presence/type
+before touching it — a future `three`/OrbitControls version that renames or
+removes one of these degrades to a partial (but never wedging) cleanup
+instead of throwing; `cancelOrbitControlsPointer` in particular still forces
+`state = -1` even if `_onPointerUp` is missing, so controls can never be left
+mid-drag. The module is explicitly documented as tied to the exact `three`
+version pinned in `package.json` (r185) — not upgraded as part of this pass.
+Shape-detection and safe-degradation are both covered by
+`src/__tests__/orbitControlsAdapter.test.ts` (constructs a real `OrbitControls`
+against a `jsdom` element, asserts the expected private fields are detected,
+then deletes them and asserts every adapter function still runs without
+throwing).
+
+**Unit-test evidence:** `src/__tests__/cameraControls.test.ts` gained a
+`shouldSuppressCameraKeys: map keyboard region exemption` block (9 scenarios:
+the map region itself and a non-interactive descendant are exempted from the
+tabindex rule; an ordinary tabindex element outside the region, an input, a
+button, a link, and the Inspector are all still suppressed even nested inside
+or adjacent to the region; the exemption doesn't leak to an unrelated
+sibling; and it isn't brittle to the marker attribute's exact string value).
+The live focus/blur state machine that actually flips `mapKeyboardActive`
+lives inside `MapViewer.tsx`'s mount-once effect and is covered end-to-end in
+`tests/e2e/camera-controls.spec.ts` instead, since it depends on real
+browser focus events a `jsdom` unit test can't exercise faithfully.
+`src/__tests__/orbitControlsAdapter.test.ts` adds 5 scenarios for the adapter
+module (above).
+
+**Browser-test evidence:** `tests/e2e/camera-controls.spec.ts`'s main test
+(still one of exactly two tests in the file — see "Test-suite weight" above,
+same resource discipline applies) now additionally covers: shortcuts inert
+on load before any activation; explicit pointer activation (click the
+canvas) and keyboard-only activation (Tab reaches the map) both turning
+shortcuts on; a visible focus ring while active and its absence while
+inactive; focus moving to another control (a toolbar button) deactivating
+immediately; a key already held stopping the instant focus moves to the seed
+field, *before* its keyup arrives, with no drift afterward; Space/Enter on a
+focused button remaining fully native; shortcuts remaining usable with the
+Inspector open provided the map itself is focused; and the map being
+reactivatable after a full deactivate/reactivate cycle (no "only works once"
+state). The narrow-viewport/reduced-motion test confirms map focus is
+available identically at a 390px width (the wrapper's `tabIndex` has no
+layout-dependent CSS gating it, unlike the mobile-only map-controls tray
+toggle). The comparison-divider's arrow-key behavior is not separately
+re-exercised live: it is the same native `<input type="range">` element,
+suppressed by the same `INPUT`-tag branch of `shouldSuppressCameraKeys`
+already exercised by the timeline range test, and creating a second branch
+just to reach it would add a second, expensive baseline-simulation-paying
+scenario for no new code path — the same "argued from the implementation"
+discipline already used elsewhere in this file for the branch-recomputation
+and unmount-while-held scenarios.
+
+**Evidence:** `npm run lint` clean (0 errors/warnings). `npm run build`
+succeeded. Full Vitest: **124/124 passed** (7 files — the prior 110, plus the
+14 new tests described above). The complete 8-test Playwright suite passed
+cleanly and uninterrupted: **8/8 passed, 22.3 minutes**, zero page/console
+errors. Two flakes surfaced and were fixed during this pass, both in test
+code, not application code: an earlier revision of the new held-key-movement
+check used a 150ms hold window (this environment's software-rendered frame
+rate can produce zero elapsed animation frames in that short a window — the
+file's own 400ms convention, documented above, exists for exactly this
+reason, and the new check was widened to match); and an earlier revision
+issued a redundant map-(re)activation click while an entity was already
+selected in the Inspector, which — being a plain click landing on empty
+ground — deselected it and closed the Inspector the scenario was testing
+against (fixed by removing the redundant click; the preceding drag in that
+same scenario already focuses the map as a side effect of its own
+pointerdown, so no reactivation was needed there in the first place).

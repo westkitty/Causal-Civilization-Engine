@@ -101,18 +101,34 @@ export function updateDragExceededThreshold(
   return !isClickNotDrag(startX, startY, currentX, currentY);
 }
 
+// Attribute marking the map's own focusable wrapper (see MapViewer.tsx). The
+// primary gate for camera keyboard shortcuts is now positive activation —
+// MapViewer only processes Q/E/W/S/+/-/R while this element itself has DOM
+// focus (see the mapKeyboardActive flag in MapViewer.tsx). This denylist is
+// kept as a secondary, defense-in-depth check for the map's own focused
+// state (and any future control living inside it), so it must not itself
+// suppress the map wrapper — see the exemption below.
+export const MAP_KEYBOARD_REGION_ATTR = "data-camera-keyboard-region";
+
 // Camera keyboard shortcuts (Q/E/W/S/+/-/R) must not fire while the user is
 // typing, operating a native form control, interacting with any button/link,
-// or interacting with the Inspector panel — matching the task requirement
-// that keyboard camera movement begin only in an appropriate map control
-// context, not merely avoid a specific denylist of elements. Arrow keys are
-// deliberately not part of Parable's scheme, so timeline/divider slider
-// arrow-key behavior never collides with this check.
+// or interacting with the Inspector panel. This is secondary to the positive
+// map-focus activation gate in MapViewer.tsx (shortcuts are inert unless the
+// map wrapper itself has focus); this function remains as defense-in-depth
+// for that focused state. Arrow keys are deliberately not part of Parable's
+// scheme, so timeline/divider slider arrow-key behavior never collides with
+// this check.
 export function shouldSuppressCameraKeys(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "BUTTON" || tag === "A") return true;
   if (target.contentEditable === "true") return true;
-  if (target.closest("button, a, [role='button'], [tabindex], .inspector")) return true;
+  if (target.closest("button, a, [role='button'], .inspector")) return true;
+  // The map wrapper itself carries a tabindex so it can receive focus (the
+  // positive activation model) — it must not be caught by the generic
+  // "any tabindex-bearing element" rule below, which exists to suppress
+  // *other* focusable-but-non-map elements (dividers, custom controls).
+  if (target.closest(`[${MAP_KEYBOARD_REGION_ATTR}]`)) return false;
+  if (target.closest("[tabindex]")) return true;
   return false;
 }

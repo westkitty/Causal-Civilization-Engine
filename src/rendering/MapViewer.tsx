@@ -9,8 +9,13 @@ import {
   computeCameraFrameDeltas,
   shouldSuppressCameraKeys,
   updateDragExceededThreshold,
+  MAP_KEYBOARD_REGION_ATTR,
   type CameraKeyAction,
 } from "./cameraControls";
+import {
+  zeroOrbitControlsDamping,
+  cancelOrbitControlsPointer,
+} from "./orbitControlsAdapter";
 
 // Camera-reset glide rate, ported directly from Parable's CAMERA_SMOOTH
 // (godot-spike/scripts/camera_rig.gd) — see docs/PARABLE_CONTROL_PORT.md.
@@ -191,26 +196,16 @@ export const MapViewer: React.FC<MapViewerProps> = ({
       activePointerId = event.pointerId;
       dragExceeded = false;
       preDragSnapshot = { position: camera.position.clone(), target: controls.target.clone() };
+      // Deliberate pointer interaction with the map activates its keyboard
+      // shortcut context (positive activation model — see
+      // docs/PARABLE_CONTROL_PORT.md). The canvas itself isn't focusable, so
+      // this focuses the wrapper div explicitly rather than relying on
+      // default browser click-to-focus (which only applies to the element
+      // actually clicked). preventScroll avoids any layout jump, since the
+      // map is always already in view when this fires.
+      containerRef.current?.focus({ preventScroll: true });
     };
     renderer.domElement.addEventListener("pointerdown", handlePointerDown);
-
-    // enableDamping means OrbitControls only applies a fraction
-    // (dampingFactor) of its accumulated _sphericalDelta/_panOffset per
-    // update() call, not the whole thing at once — the remainder stays
-    // queued and keeps getting (partially) applied on subsequent frames.
-    // Copying camera.position/controls.target back to a snapshot is not
-    // enough on its own: whatever hadn't been applied yet re-appears on the
-    // very next frame(s), partially re-introducing the movement that was
-    // just reverted. Not part of the public .d.ts, hence the narrow cast.
-    const zeroDampingAccumulators = () => {
-      const internals = controls as unknown as {
-        _sphericalDelta: { theta: number; phi: number };
-        _panOffset: THREE.Vector3;
-      };
-      internals._sphericalDelta.theta = 0;
-      internals._sphericalDelta.phi = 0;
-      internals._panOffset.set(0, 0, 0);
-    };
 
     const handlePointerMove = (event: PointerEvent) => {
       if (!pointerDownPos || event.pointerId !== activePointerId) return;
@@ -252,7 +247,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         // undoing this revert (see zeroDampingAccumulators above).
         camera.position.copy(preDragSnapshot.position);
         controls.target.copy(preDragSnapshot.target);
-        zeroDampingAccumulators();
+        zeroOrbitControlsDamping(controls);
       }
       clearPointerGestureState();
       if (wasDrag) return;
@@ -294,6 +289,14 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     const heldCameraActions = new Set<CameraKeyAction>();
     let resetActive = false;
 
+    // Positive map-focus activation model (see docs/PARABLE_CONTROL_PORT.md):
+    // Q/E/W/S/+/-/R are inert until the map wrapper itself has DOM focus.
+    // Set true only by the wrapper's own "focus" event and false by its own
+    // "blur" event below — never touched from any other handler in this
+    // effect — so it always mirrors real DOM focus state. A plain closure
+    // flag (not React state) so focus changes never trigger a re-render.
+    let mapKeyboardActive = false;
+
     const syncOrbitModifier = (event: KeyboardEvent) => {
       // Only Alt is remapped here. OrbitControls' own onMouseDown dispatch
       // already special-cases Shift (and Ctrl/Meta): when the configured
@@ -308,8 +311,18 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Runs unconditionally, regardless of map-focus state: this only
+      // primes which mouse button orbits on the *next* drag and must keep
+      // working no matter what currently has focus (native Shift-drag-orbit
+      // and this port's own Alt-drag-orbit remap are pointer behaviors, not
+      // part of the gated keyboard shortcut set).
       syncOrbitModifier(event);
-      if (shouldSuppressCameraKeys(event.target)) return;
+      // Positive activation is the primary gate: shortcuts are inert unless
+      // the map wrapper itself is focused. shouldSuppressCameraKeys remains
+      // as defense-in-depth for whatever is focused *within* an active map
+      // context (there is nothing focusable inside it today, but this keeps
+      // the same protection the denylist always provided).
+      if (!mapKeyboardActive || shouldSuppressCameraKeys(event.target)) return;
       const action = mapKeyToCameraAction(event.code);
       if (!action) return;
       event.preventDefault();
@@ -323,12 +336,36 @@ export const MapViewer: React.FC<MapViewerProps> = ({
 
     const handleKeyUp = (event: KeyboardEvent) => {
       syncOrbitModifier(event);
+      // Deliberately ungated by mapKeyboardActive/shouldSuppressCameraKeys:
+      // a key already held when focus moves away from the map (or the
+      // wrapper's own blur handler already cleared it, below) must still be
+      // released cleanly on its keyup, wherever focus has since moved.
       const action = mapKeyToCameraAction(event.code);
       if (action && action !== "reset") heldCameraActions.delete(action);
     };
 
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
+
+    // The map wrapper is the sole focus target for this positive-activation
+    // boundary (it has no focusable descendants), so its own native "focus"
+    // and "blur" — not the bubbling focusin/focusout — are exactly the
+    // "entered/left the map control context" signal.
+    const handleMapFocus = () => {
+      mapKeyboardActive = true;
+    };
+    const handleMapBlur = () => {
+      mapKeyboardActive = false;
+      // Losing map focus must stop any in-progress keyboard movement
+      // immediately, not wait for a keyup that may arrive late (or with
+      // focus already elsewhere, where handleKeyUp above no longer matters
+      // for actually stopping motion — the animation loop only reads
+      // heldCameraActions).
+      heldCameraActions.clear();
+    };
+    const mapFocusTarget = containerRef.current;
+    mapFocusTarget.addEventListener("focus", handleMapFocus);
+    mapFocusTarget.addEventListener("blur", handleMapBlur);
 
     // Cancels an in-progress pointer drag (orbit or pan) through
     // OrbitControls' own real pointer-up path — not just resetting `state`.
@@ -341,21 +378,14 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     // then silently swallowed by OrbitControls' onPointerDown
     // (`_isTrackingPointer` short-circuits before `_onMouseDown` ever runs),
     // permanently breaking mouse-driven camera control until reload. Calling
-    // the library's own handler guarantees its internal bookkeeping is
-    // cleared exactly as it would be for a real release. Not part of the
-    // public .d.ts, hence the narrow casts.
+    // the library's own handler (via orbitControlsAdapter) guarantees its
+    // internal bookkeeping is cleared exactly as it would be for a real
+    // release.
     const cancelActivePointerDrag = () => {
-      if (activePointerId !== null) {
-        (controls as unknown as { _onPointerUp: (e: { pointerId: number }) => void })
-          ._onPointerUp({ pointerId: activePointerId });
-      }
-      // Defensive fallback in case some path leaves state non-NONE without
-      // an active pointer id (_onPointerUp above already does this when a
-      // pointer was active).
-      (controls as unknown as { state: number }).state = -1;
+      cancelOrbitControlsPointer(controls, activePointerId);
       // enableDamping means a completed drag keeps "coasting" otherwise —
-      // see zeroDampingAccumulators above.
-      zeroDampingAccumulators();
+      // see zeroOrbitControlsDamping above.
+      zeroOrbitControlsDamping(controls);
       controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
       // A cancelled drag must not be reclassified as a click if a stray
       // click event still arrives afterward (e.g. the button is released,
@@ -525,6 +555,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
           cameraMouseButtonLeft: controls.mouseButtons.LEFT,
           cameraActivePointerId: activePointerId,
           cameraDragExceeded: dragExceeded,
+          cameraMapKeyboardActive: mapKeyboardActive,
         };
       };
     }
@@ -537,6 +568,8 @@ export const MapViewer: React.FC<MapViewerProps> = ({
       window.removeEventListener("pointerup", clearActivePointerId);
       window.removeEventListener("pointercancel", clearActivePointerId);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      mapFocusTarget.removeEventListener("focus", handleMapFocus);
+      mapFocusTarget.removeEventListener("blur", handleMapBlur);
       triggerResetRef.current = () => {};
       if (rendererRef.current) {
         rendererRef.current.domElement.removeEventListener("pointerdown", handlePointerDown);
@@ -585,7 +618,20 @@ export const MapViewer: React.FC<MapViewerProps> = ({
 
   return (
     <div className="map-canvas-wrap">
-      <div ref={containerRef} className="map-canvas" aria-label="Interactive civilization map" />
+      <div
+        ref={containerRef}
+        className="map-canvas"
+        aria-label="Interactive civilization map"
+        // Positive keyboard-activation boundary (docs/PARABLE_CONTROL_PORT.md):
+        // focusing this element (via Tab or after a pointer interaction with
+        // the map, see handlePointerDown above) is what turns on the Q/E/W/S/
+        // +/-/R camera shortcuts; focus moving anywhere else turns them back
+        // off. The data attribute lets shouldSuppressCameraKeys recognize
+        // this element as the map region rather than an ordinary
+        // tabindex-bearing control (see cameraControls.ts).
+        tabIndex={0}
+        {...{ [MAP_KEYBOARD_REGION_ATTR]: "true" }}
+      />
       <button
         type="button"
         className="icon-button map-reset-button"

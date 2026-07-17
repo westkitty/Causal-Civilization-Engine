@@ -74,6 +74,10 @@ The application is organized as a map-first causal-history workbench:
   read-only source citations): left-drag pans, middle-drag (or Shift/Alt-left-drag)
   orbits, scroll wheel zooms, Q/E orbit and W/S pitch and +/− zoom via
   keyboard, and R (or the on-map reset button) returns to the initial view;
+  the keyboard shortcuts activate only once the map itself is focused (Tab or
+  click/drag on it) and switch off the instant focus moves elsewhere, so they
+  never fire from elsewhere on the page — the map shows a visible focus ring
+  while they're live;
 - the shell names simulation readiness, current year, active overlay, branch state,
   seed replacement behavior, and the primary available action;
 - baseline and counterfactual Worker runs expose real percentage progress without

@@ -407,6 +407,22 @@ code {
   height: 100% !important;
 }
 
+/* Visible indication that the map has captured keyboard focus (the
+   Q/E/W/S/+/-/R camera shortcuts are only live while this is shown — see
+   docs/PARABLE_CONTROL_PORT.md). Reuses the same --color-focus token and 3px
+   weight as the app-wide :focus-visible rule above, but as an inset shadow
+   rather than an outline: .map-stage clips overflow, and .map-canvas fills
+   it edge-to-edge, so an outward outline-offset would be clipped away on
+   every side. Plain :focus (not :focus-visible) so the ring — and the
+   shortcuts it signals — show consistently for both pointer and keyboard
+   activation, not just keyboard, matching this element's own activation
+   model rather than the browser's generic heuristic for "was this focused
+   by a mouse click or by keyboard navigation". */
+.map-canvas:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 3px var(--color-focus);
+}
+
 .map-reset-button {
   position: absolute;
   z-index: 20;

@@ -593,3 +593,19 @@ entry records the audit-relevant summary.
   remain fully functional after adding drag-to-pan on the left mouse button
   (verified directly — a pan-drag does not spuriously select/deselect, and a
   genuine click after a drag still selects correctly).
+
+## 2026-07-16 amendment — camera keyboard-shortcut scoping
+
+A defect outside the scope of the map-control port above (not a new finding
+against the original `962dac8` audit target) was closed on
+`5d56353c48e5990ac646f52ab5d7935423dcbbe1`: the ported Q/E/W/S/+/-/R camera
+shortcuts were live on any page focus state, including the default
+`document.body` focus a fresh load starts in, gated only by a denylist of
+specific elements rather than a positive "the map itself must be focused"
+model. Fixed by making the map's own wrapper focusable and gating shortcut
+processing on its own focus/blur state; the denylist remains as
+defense-in-depth. Full account, including the centralized
+`orbitControlsAdapter.ts` module this pass also introduced, is in
+`docs/PARABLE_CONTROL_PORT.md`'s "Task 4: Positive map-focus keyboard
+activation" section — not duplicated here to avoid two documents drifting out
+of sync on the same fix.

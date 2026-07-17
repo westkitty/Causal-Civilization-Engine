@@ -182,3 +182,38 @@ Parable's read-only state (`branch spike/godot-hand-feel-2026-07-02`, HEAD
 `d6f66b705c0be43be791585b2b6953450ecbd9c1`, clean working tree, nothing staged)
 was recorded before any inspection and re-verified identical afterward — see
 `docs/PARABLE_CONTROL_PORT.md`.
+
+## 2026-07-16 Camera keyboard-shortcut scoping
+
+Starting SHA `5d56353c48e5990ac646f52ab5d7935423dcbbe1`. Closed the one
+remaining defect from the map-control port: Q/E/W/S/=/+/-/R were attached to
+`window`'s keydown/keyup and gated only by a denylist
+(`shouldSuppressCameraKeys`), so they stayed live on the page's default
+focus state (`document.body`) — a user could press Q before ever touching
+the map and the camera would move.
+
+Replaced the denylist as the *primary* gate with positive activation: the
+map's own wrapper div now takes `tabIndex={0}`, and a plain closure flag
+(`mapKeyboardActive`, not React state) is set by that element's own
+`focus`/`blur` events — true only while the map itself has DOM focus, which
+the user grants either by Tab or by a pointer interaction with the map
+(`handlePointerDown` explicitly focuses the wrapper). Losing focus to any
+other control clears held keyboard actions immediately, in the same tick as
+the blur, not on a later keyup. `shouldSuppressCameraKeys` remains as a
+secondary check and gained a scoped exemption so the map wrapper's own new
+`tabIndex` doesn't suppress itself. A visible focus ring
+(`.map-canvas:focus`, an inset `box-shadow` reusing the existing
+`--color-focus` token) shows exactly when shortcuts are live. None of the six
+previously-fixed pointer/keyboard behaviors from the two passes above were
+touched.
+
+Secondarily, and boundedly: centralized the three separate call sites that
+reached into OrbitControls' private `_sphericalDelta`/`_panOffset`/
+`_onPointerUp`/`state` fields into one new module,
+`src/rendering/orbitControlsAdapter.ts`, documented as tied to the exact
+`three` version pinned in `package.json` and degrading to a safe partial
+cleanup (never a wedged control) if any field is missing.
+
+Full details, the exact scenarios covered, and validation evidence are in
+`docs/PARABLE_CONTROL_PORT.md`'s "Task 4: Positive map-focus keyboard
+activation" section.

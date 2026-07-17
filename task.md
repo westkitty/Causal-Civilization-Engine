@@ -94,6 +94,14 @@
   - `[x]` One Parable behavior (world-position pan bound) implemented then deliberately removed after adversarial testing showed it destabilizing orbit — documented, not silently dropped
   - `[x]` 29 new Vitest unit tests for extracted pure control logic; 4 new Playwright tests plus additions to the existing branch-comparison test for real-browser coverage
 
+- `[x]` **Phase 18: Camera keyboard-shortcut scoping** (see `docs/PARABLE_CONTROL_PORT.md`'s "Task 4" section)
+  - `[x]` Replaced the denylist-only keyboard gate with positive map-focus activation: shortcuts are inert until the map wrapper itself has DOM focus (Tab, or a pointer interaction with the map), and deactivate the instant focus moves elsewhere
+  - `[x]` Losing map focus while a key is held clears it immediately (on blur, not on the eventual keyup); keyup remains ungated so it always clears a held action regardless of where focus has since moved
+  - `[x]` Added a visible map-focus indicator (`.map-canvas:focus`, reusing the existing `--color-focus` token) and a scoped exemption in `shouldSuppressCameraKeys` so the map wrapper's own new `tabIndex` doesn't suppress itself
+  - `[x]` Centralized OrbitControls' private `_sphericalDelta`/`_panOffset`/`_onPointerUp`/`state` access (previously three separate call sites) into `src/rendering/orbitControlsAdapter.ts`, documented as version-tied and fails safely if a field is missing
+  - `[x]` Preserved all six previously-fixed pointer/keyboard behaviors from the two prior camera-control passes verbatim
+  - `[x]` 14 new Vitest unit tests (9 for the denylist's map-region exemption, 5 for the adapter's shape-detection and safe-degradation); `tests/e2e/camera-controls.spec.ts` extended in place (still 2 tests, 8 total in the suite) to cover on-load inertness, Tab and pointer activation, deactivation-by-other-control, held-key-stops-on-blur, Inspector-open usability, and Space/Enter-on-a-focused-button remaining native
+
 ## Legend
 
 `[x]` implemented and verified at the stated level · `[deferred]` recorded, not done (rationale in the audit).
