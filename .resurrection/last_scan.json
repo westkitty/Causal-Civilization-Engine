@@ -3,14 +3,14 @@
     "available": true,
     "branch": "main",
     "dirty": true,
-    "head": "be714399dff2c4e6ab11ec711e918386e6f73c88",
-    "head_subject": "fix: scope camera shortcuts to the map",
+    "head": "08b96e91dcf75b0171687fe7a325af9731933545",
+    "head_subject": "chore: add project resurrection report and handoff documentation",
     "is_repo": true,
     "remote_url": "git@github.com:westkitty/Causal-Civilization-Engine.git",
     "repo_root": "/Users/andrew/Causal Civilization Engine",
-    "staged_count": 0,
-    "tracked_modified_count": 0,
-    "untracked_count": 1
+    "staged_count": 1,
+    "tracked_modified_count": 3,
+    "untracked_count": 0
   },
   "identity": {
     "name": "Causal Civilization Engine",
@@ -34,16 +34,16 @@
     "Validate the project with the hinted run/dev command: npm run dev",
     "Validate the project with the hinted build command: npm run build"
   ],
-  "scan_timestamp": "2026-07-17T23:40:00+00:00",
+  "scan_timestamp": "2026-07-18T06:18:46+00:00",
   "scanner_version": "1.1.0",
   "signature": {
     "git_dirty": {
       "dirty": true,
-      "staged_count": 0,
-      "tracked_modified_count": 0,
-      "untracked_count": 1
+      "staged_count": 1,
+      "tracked_modified_count": 3,
+      "untracked_count": 0
     },
-    "git_head": "be714399dff2c4e6ab11ec711e918386e6f73c88",
+    "git_head": "08b96e91dcf75b0171687fe7a325af9731933545",
     "project_type": "vite_app",
     "scanner_version": "1.1.0",
     "watched_files": {
