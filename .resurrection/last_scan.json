@@ -3,8 +3,8 @@
     "available": true,
     "branch": "main",
     "dirty": true,
-    "head": "08b96e91dcf75b0171687fe7a325af9731933545",
-    "head_subject": "chore: add project resurrection report and handoff documentation",
+    "head": "ce40355af951724e914b29316303b5576a6b2ca1",
+    "head_subject": "chore: update resurrection metadata report",
     "is_repo": true,
     "remote_url": "git@github.com:westkitty/Causal-Civilization-Engine.git",
     "repo_root": "/Users/andrew/Causal Civilization Engine",
@@ -34,7 +34,7 @@
     "Validate the project with the hinted run/dev command: npm run dev",
     "Validate the project with the hinted build command: npm run build"
   ],
-  "scan_timestamp": "2026-07-18T06:18:46+00:00",
+  "scan_timestamp": "2026-07-18T06:18:53+00:00",
   "scanner_version": "1.1.0",
   "signature": {
     "git_dirty": {
@@ -43,7 +43,7 @@
       "tracked_modified_count": 3,
       "untracked_count": 0
     },
-    "git_head": "08b96e91dcf75b0171687fe7a325af9731933545",
+    "git_head": "ce40355af951724e914b29316303b5576a6b2ca1",
     "project_type": "vite_app",
     "scanner_version": "1.1.0",
     "watched_files": {

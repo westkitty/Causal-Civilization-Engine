@@ -14,7 +14,7 @@
 
 ## Git State
 - Summary: Repo root: /Users/andrew/Causal Civilization Engine | Branch: main | Status: dirty | Remote: git@github.com:westkitty/Causal-Civilization-Engine.git
-- Latest commit: 08b96e91dcf75b0171687fe7a325af9731933545 chore: add project resurrection report and handoff documentation
+- Latest commit: ce40355af951724e914b29316303b5576a6b2ca1 chore: update resurrection metadata report
 - Tracked modified count: 3
 - Untracked count: 0
 - Staged count: 1
@@ -51,5 +51,5 @@ No secret-risk matches detected.
 5. Validate the project with the hinted build command: npm run build
 
 ## Scan Metadata
-- Timestamp: 2026-07-18T06:18:46+00:00
+- Timestamp: 2026-07-18T06:18:53+00:00
 - Scanner version: 1.1.0

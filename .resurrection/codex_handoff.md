@@ -9,7 +9,7 @@ Read this handoff and project_report.md first.
 
 ## Current Git State
 - Repo root: /Users/andrew/Causal Civilization Engine | Branch: main | Status: dirty | Remote: git@github.com:westkitty/Causal-Civilization-Engine.git
-- Latest commit: 08b96e91dcf75b0171687fe7a325af9731933545 chore: add project resurrection report and handoff documentation
+- Latest commit: ce40355af951724e914b29316303b5576a6b2ca1 chore: update resurrection metadata report
 
 ## Detected Project Type
 - Type: vite_app
