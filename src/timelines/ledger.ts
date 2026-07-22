@@ -1,106 +1,124 @@
 import type { HistoricalEvent, EntityId, EventId, StateDelta } from "../core/types";
 
 export class CausalLedger {
-  events: Record<EventId, HistoricalEvent> = {};
+  private eventStore: Record<EventId, HistoricalEvent> = {};
+  private orderedEventsCache: HistoricalEvent[] | null = null;
   branchId: string;
 
   constructor(branchId: string = "main") {
     this.branchId = branchId;
   }
 
+  get events(): Record<EventId, HistoricalEvent> {
+    return this.eventStore;
+  }
+
+  set events(events: Record<EventId, HistoricalEvent>) {
+    this.eventStore = events;
+    this.orderedEventsCache = null;
+  }
+
   addEvent(event: Omit<HistoricalEvent, "branchId">): HistoricalEvent {
-    if (this.events[event.eventId]) {
+    if (this.eventStore[event.eventId]) {
       throw new Error(`Duplicate causal event ID: ${event.eventId}`);
     }
     const fullEvent: HistoricalEvent = {
       ...event,
       branchId: this.branchId,
     };
-    this.events[fullEvent.eventId] = fullEvent;
+    this.eventStore[fullEvent.eventId] = fullEvent;
+    this.orderedEventsCache = null;
     return fullEvent;
   }
 
   getEvent(eventId: EventId): HistoricalEvent | undefined {
-    return this.events[eventId];
+    return this.eventStore[eventId];
   }
 
-  // Returns all events in order of occurrence
+  // Returns a stable chronological snapshot. The cache is invalidated whenever
+  // events are replaced or appended, avoiding repeated full-ledger sorts in UI
+  // and causal-analysis hot paths.
   getAllEvents(): HistoricalEvent[] {
-    return Object.values(this.events).sort((a, b) => a.time.year - b.time.year);
+    if (!this.orderedEventsCache) {
+      this.orderedEventsCache = Object.values(this.eventStore).sort(
+        (a, b) => a.time.year - b.time.year || a.eventId.localeCompare(b.eventId),
+      );
+    }
+    return this.orderedEventsCache;
   }
 
-  // Traces the causal ancestry of an event
+  // Traces the causal ancestry of an event without repeatedly shifting an array.
   traceAncestry(eventId: EventId): EventId[] {
     const ancestors = new Set<EventId>();
-    const queue = [eventId];
-    while (queue.length > 0) {
-      const curr = queue.shift()!;
-      const ev = this.events[curr];
-      if (ev) {
-        for (const p of ev.parentEventIds) {
-          if (!ancestors.has(p)) {
-            ancestors.add(p);
-            queue.push(p);
-          }
-        }
+    const queue: EventId[] = [eventId];
+    let cursor = 0;
+    while (cursor < queue.length) {
+      const curr = queue[cursor++];
+      const ev = this.eventStore[curr];
+      if (!ev) continue;
+      for (const parentId of ev.parentEventIds) {
+        if (ancestors.has(parentId)) continue;
+        ancestors.add(parentId);
+        queue.push(parentId);
       }
     }
     return Array.from(ancestors);
   }
 
-  // Traces why an entity is in its current state
+  // Traces why an entity is in its current state.
   traceEntityHistory(entityId: EntityId): HistoricalEvent[] {
-    return Object.values(this.events)
-      .filter(ev => ev.affectedEntityIds.includes(entityId))
-      .sort((a, b) => a.time.year - b.time.year);
+    return this.getAllEvents().filter(
+      event => event.affectedEntityIds.includes(entityId),
+    );
   }
 
   clone(newBranchId: string): CausalLedger {
     const newLedger = new CausalLedger(newBranchId);
-    newLedger.events = JSON.parse(JSON.stringify(this.events));
+    newLedger.events = structuredClone(this.eventStore);
     return newLedger;
   }
 }
 
-// Generate state deltas by comparing an entity before and after mutations
+// Generate state deltas by comparing an entity before and after mutations.
 export function diffEntity(
   entityId: string,
   component: string,
-  before: any,
-  after: any
+  before: unknown,
+  after: unknown,
 ): StateDelta[] {
   const deltas: StateDelta[] = [];
-  if (!before && after) {
-    // New entity
+  if (!before && after && typeof after === "object") {
     for (const key of Object.keys(after)) {
       deltas.push({
         entityId,
         component,
         field: key,
         before: null,
-        after: after[key],
+        after: (after as Record<string, unknown>)[key],
       });
     }
-  } else if (before && !after) {
-    // Deleted entity
+  } else if (before && !after && typeof before === "object") {
     for (const key of Object.keys(before)) {
       deltas.push({
         entityId,
         component,
         field: key,
-        before: before[key],
+        before: (before as Record<string, unknown>)[key],
         after: null,
       });
     }
-  } else if (before && after) {
-    for (const key of Object.keys(after)) {
-      if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+  } else if (before && after && typeof before === "object" && typeof after === "object") {
+    const beforeRecord = before as Record<string, unknown>;
+    const afterRecord = after as Record<string, unknown>;
+    const keys = new Set([...Object.keys(beforeRecord), ...Object.keys(afterRecord)]);
+    for (const key of keys) {
+      if (JSON.stringify(beforeRecord[key]) !== JSON.stringify(afterRecord[key])) {
         deltas.push({
           entityId,
           component,
           field: key,
-          before: before[key],
-          after: after[key],
+          before: key in beforeRecord ? beforeRecord[key] : null,
+          after: key in afterRecord ? afterRecord[key] : null,
         });
       }
     }
