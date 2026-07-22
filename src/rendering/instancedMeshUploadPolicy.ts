@@ -12,18 +12,20 @@ if (prototype[PATCH_FLAG] !== true) {
     this: THREE.InstancedMesh,
     index: number,
     matrix: THREE.Matrix4,
-  ): void {
+  ): THREE.InstancedMesh {
     originalSetMatrixAt.call(this, index, matrix);
     this.instanceMatrix.needsUpdate = true;
+    return this;
   };
 
   THREE.InstancedMesh.prototype.setColorAt = function setColorAtAndUpload(
     this: THREE.InstancedMesh,
     index: number,
     color: THREE.Color,
-  ): void {
+  ): THREE.InstancedMesh {
     originalSetColorAt.call(this, index, color);
     if (this.instanceColor) this.instanceColor.needsUpdate = true;
+    return this;
   };
 
   prototype[PATCH_FLAG] = true;
