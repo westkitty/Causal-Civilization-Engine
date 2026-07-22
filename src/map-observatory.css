@@ -50,7 +50,7 @@
     radial-gradient(ellipse at center, transparent 54%, rgb(0 0 0 / 0.32) 100%);
 }
 
-/* Fine survey grid. Kept faint so terrain remains primary. */
+/* Layered cartographic texture: large contour forms plus a fine survey grid. */
 .map-canvas-wrap::after {
   position: absolute;
   inset: 0;
@@ -58,12 +58,15 @@
   pointer-events: none;
   content: "";
   border-radius: inherit;
-  opacity: 0.15;
+  opacity: 0.22;
   background-image:
+    url("/observatory-topography.svg"),
     linear-gradient(rgb(153 205 194 / 0.07) 1px, transparent 1px),
     linear-gradient(90deg, rgb(153 205 194 / 0.07) 1px, transparent 1px);
-  background-size: 64px 64px;
-  mask-image: radial-gradient(ellipse at center, black 18%, transparent 88%);
+  background-position: center, center, center;
+  background-repeat: no-repeat, repeat, repeat;
+  background-size: min(82%, 56rem) auto, 64px 64px, 64px 64px;
+  mask-image: radial-gradient(ellipse at center, black 22%, transparent 90%);
   mix-blend-mode: screen;
 }
 
@@ -229,8 +232,8 @@
   }
 
   .map-canvas-wrap::after {
-    opacity: 0.08;
-    background-size: 48px 48px;
+    opacity: 0.11;
+    background-size: min(110%, 34rem) auto, 48px 48px, 48px 48px;
   }
 
   .comparison-map-label {
