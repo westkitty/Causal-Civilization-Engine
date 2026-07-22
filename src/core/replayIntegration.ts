@@ -1,5 +1,4 @@
-import type { WorldState } from "./types";
-import type { HistoricalEvent } from "./types";
+import type { HistoricalEvent, WorldState } from "./types";
 import type { BranchSnapshot } from "../timelines/branch";
 import {
   buildProvenanceGraph,
@@ -48,13 +47,10 @@ export function framesFromYearHashes(yearHashes: Record<number, string>): Replay
 export function buildReplayDiagnostics(
   seed: string,
   result: ReplayResultShape,
-  runtime: Record<string, string> = {},
+  runtime: Record<string, string> = { execution: "main-thread" },
 ): ReplayDiagnostics {
+  const normalizedRuntime = { execution: "main-thread", ...runtime };
   const frames = framesFromYearHashes(result.yearHashes);
-  const normalizedRuntime = {
-    execution: typeof WorkerGlobalScope !== "undefined" ? "worker" : "main-thread",
-    ...runtime,
-  };
 
   return {
     schemaVersion: 1,
