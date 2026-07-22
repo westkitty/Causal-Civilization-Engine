@@ -1,6 +1,6 @@
-import { TIMELINE_ARCHIVE_VERSION } from "./archive";
 import type { SerializedTimelineArchive, StatePatchOperation } from "./archive";
 
+const SUPPORTED_TIMELINE_ARCHIVE_VERSION = 1;
 const FORBIDDEN_PATH_SEGMENTS = new Set(["__proto__", "prototype", "constructor"]);
 
 export function isSafePatchPath(path: Array<string | number>): boolean {
@@ -29,7 +29,7 @@ function validatePatch(operation: StatePatchOperation, label: string, errors: st
 export function validateTimelineArchive(archive: SerializedTimelineArchive): string[] {
   const errors: string[] = [];
   if (!archive || typeof archive !== "object") return ["Archive must be an object"];
-  if (archive.version !== TIMELINE_ARCHIVE_VERSION) {
+  if (archive.version !== SUPPORTED_TIMELINE_ARCHIVE_VERSION) {
     errors.push(`Unsupported timeline archive version ${archive.version}`);
   }
   if (!archive.branchId?.trim()) errors.push("Archive branchId is required");
