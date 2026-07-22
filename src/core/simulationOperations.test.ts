@@ -113,6 +113,6 @@ describe("analysis facade", () => {
   it("exposes search and provenance without UI dependencies", () => {
     const api = createSimulationAnalysisApi({ branchId: "main", states: {}, events: { "evt-1": event() }, yearHashes: {} });
     expect(api.search({ text: "Aster" })[0].event.eventId).toBe("evt-1");
-    expect(api.explainEvent("evt-1").targetEventId).toBe("evt-1");
+    expect(api.explainEvent("evt-1").subjectId).toBe("evt-1");
   });
 });
