@@ -1,0 +1,168 @@
+name: Package Observatory Release
+
+on:
+  push:
+    branches:
+      - feat/observatory-visual-overhaul
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out visual branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build production app
+        run: npm run build
+
+      - name: Assemble release bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RELEASE_NAME="Causal-Civilization-Engine-Observatory"
+          RELEASE_ROOT="release/${RELEASE_NAME}"
+
+          mkdir -p "${RELEASE_ROOT}/dist" "${RELEASE_ROOT}/source" "${RELEASE_ROOT}/qa"
+          cp -R dist/. "${RELEASE_ROOT}/dist/"
+
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.resurrection' \
+            --exclude='node_modules' \
+            --exclude='dist' \
+            --exclude='release' \
+            --exclude='playwright-report' \
+            --exclude='test-results' \
+            ./ "${RELEASE_ROOT}/source/"
+
+          cat > "${RELEASE_ROOT}/RUN_PREBUILT.command" <<'SCRIPT'
+          #!/bin/bash
+          set -e
+          cd "$(dirname "$0")"
+          PORT="${PORT:-4173}"
+          URL="http://127.0.0.1:${PORT}"
+
+          echo "Starting Causal Civilization Engine Observatory at ${URL}"
+          echo "Keep this Terminal window open while using the app."
+          echo "Press Control-C here to stop it."
+
+          python3 -m http.server "${PORT}" --bind 127.0.0.1 --directory dist &
+          SERVER_PID=$!
+          trap 'kill "${SERVER_PID}" 2>/dev/null || true' EXIT INT TERM
+          sleep 1
+          open "${URL}" 2>/dev/null || true
+          wait "${SERVER_PID}"
+          SCRIPT
+
+          cat > "${RELEASE_ROOT}/RUN_DEVELOPMENT.command" <<'SCRIPT'
+          #!/bin/bash
+          set -e
+          cd "$(dirname "$0")/source"
+          echo "Installing exact dependencies and starting Vite development mode..."
+          npm ci
+          npm run dev -- --host 127.0.0.1 --open
+          SCRIPT
+
+          chmod +x "${RELEASE_ROOT}/RUN_PREBUILT.command" "${RELEASE_ROOT}/RUN_DEVELOPMENT.command"
+
+          cat > "${RELEASE_ROOT}/README.md" <<'README'
+          # Causal Civilization Engine — Observatory Release
+
+          This package contains both a prebuilt browser version and the editable source code for the isolated observatory visual-overhaul branch.
+
+          ## Fastest way to run on macOS
+
+          1. Unzip the download.
+          2. Double-click `RUN_PREBUILT.command`.
+          3. Keep the Terminal window open while using the app.
+          4. Your browser should open to `http://127.0.0.1:4173`.
+
+          If macOS blocks the script, Control-click it, choose **Open**, then confirm. You can also run it from Terminal:
+
+          ```bash
+          chmod +x RUN_PREBUILT.command
+          ./RUN_PREBUILT.command
+          ```
+
+          The prebuilt version only requires the `python3` command included with many developer-oriented Mac setups. It does not run a remote server or expose the app beyond your computer.
+
+          ## Development mode
+
+          Double-click `RUN_DEVELOPMENT.command`, or run:
+
+          ```bash
+          cd source
+          npm ci
+          npm run dev -- --host 127.0.0.1 --open
+          ```
+
+          Development mode requires Node.js and npm.
+
+          ## Contents
+
+          - `dist/` — compiled static production app
+          - `source/` — editable Vite/React/Three.js project source
+          - `RUN_PREBUILT.command` — local static server launcher for macOS
+          - `RUN_DEVELOPMENT.command` — dependency install and Vite launcher
+          - `qa/` — build provenance and checksums
+
+          ## Branch provenance
+
+          Branch: `feat/observatory-visual-overhaul`
+
+          This release intentionally excludes unrelated simulation, replay, and analytics work that existed on earlier experimental branches.
+          README
+
+          {
+            echo "branch=feat/observatory-visual-overhaul"
+            echo "commit=${GITHUB_SHA}"
+            echo "workflow_run=${GITHUB_RUN_ID}"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "node=$(node --version)"
+            echo "npm=$(npm --version)"
+          } > "${RELEASE_ROOT}/qa/BUILD_INFO.txt"
+
+          (
+            cd "${RELEASE_ROOT}"
+            find . -type f ! -path './qa/CHECKSUMS.sha256' -print0 \
+              | sort -z \
+              | xargs -0 sha256sum > qa/CHECKSUMS.sha256
+          )
+
+          (
+            cd release
+            zip -qr "${RELEASE_NAME}.zip" "${RELEASE_NAME}"
+          )
+
+          unzip -t "release/${RELEASE_NAME}.zip"
+
+      - name: Upload runnable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Causal-Civilization-Engine-Observatory
+          path: release/Causal-Civilization-Engine-Observatory.zip
+          if-no-files-found: error
+          retention-days: 30
