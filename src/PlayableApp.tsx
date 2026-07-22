@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Play, RotateCcw, Sparkles, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Crown,
+  Flame,
+  Globe2,
+  Play,
+  RotateCcw,
+  Sparkles,
+  Trash2,
+  Zap,
+} from "lucide-react";
 import type { HistoricalEvent, WorldState } from "./core/types";
 import { MapViewer } from "./rendering/MapViewer";
 import { Timeline } from "./ui/Timeline";
@@ -7,6 +18,7 @@ import { Branch } from "./timelines/branch";
 import type { TimelineIntervention } from "./timelines/branch";
 import { CausalLedger } from "./timelines/ledger";
 import type { PlayableInterventionAction, PlayableInterventionKind } from "./timelines/interventionEffects";
+import type { DivineMiracleAction, DivineMiracleKind } from "./timelines/miracleEffects";
 import {
   STARTING_INFLUENCE,
   actionsForEntity,
@@ -14,6 +26,13 @@ import {
   makeQueuedAction,
   scoreCivilization,
 } from "./gameplay/gameplay";
+import {
+  STARTING_DIVINITY,
+  miracleDefinition,
+  miraclesForEntity,
+  makeQueuedMiracle,
+  worldMiracles,
+} from "./gameplay/miracles";
 
 const END_YEAR = 400;
 
@@ -29,6 +48,8 @@ function PlayableApp() {
   const [playerStates, setPlayerStates] = useState<Record<number, WorldState>>({});
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [queuedActions, setQueuedActions] = useState<PlayableInterventionAction[]>([]);
+  const [queuedMiracles, setQueuedMiracles] = useState<DivineMiracleAction[]>([]);
+  const [activeOmen, setActiveOmen] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -41,16 +62,22 @@ function PlayableApp() {
   const baselineLedgerRef = useRef(new CausalLedger("main"));
   const activeWorkerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
+  const omenTimerRef = useRef<number | null>(null);
 
   const baselineState = baselineStates[currentYear] ?? baselineStates[END_YEAR];
   const playerState = playerStates[currentYear] ?? playerStates[END_YEAR];
   const planningState = baselineState;
   const influenceSpent = queuedActions.reduce((sum, action) => sum + action.cost, 0);
   const influenceRemaining = STARTING_INFLUENCE - influenceSpent;
+  const divinitySpent = queuedMiracles.reduce((sum, miracle) => sum + miracle.cost, 0);
+  const divinityRemaining = STARTING_DIVINITY - divinitySpent;
   const availableActions = actionsForEntity(planningState, selectedEntityId);
+  const availableMiracles = miraclesForEntity(planningState, selectedEntityId);
+  const globalMiracles = worldMiracles();
   const baselineScore = scoreCivilization(baselineStates[END_YEAR]);
   const playerScore = scoreCivilization(playerStates[END_YEAR]);
   const scoreDelta = playerStates[END_YEAR] ? playerScore.total - baselineScore.total : 0;
+  const planSize = queuedActions.length + queuedMiracles.length;
 
   const objectiveStatus = useMemo(() => {
     if (!playerStates[END_YEAR]) return [];
@@ -78,6 +105,21 @@ function PlayableApp() {
     activeWorkerRef.current = null;
   };
 
+  const clearOmen = () => {
+    if (omenTimerRef.current !== null) window.clearTimeout(omenTimerRef.current);
+    omenTimerRef.current = null;
+    setActiveOmen(null);
+  };
+
+  const showOmen = (invocation: string) => {
+    if (omenTimerRef.current !== null) window.clearTimeout(omenTimerRef.current);
+    setActiveOmen(invocation);
+    omenTimerRef.current = window.setTimeout(() => {
+      setActiveOmen(null);
+      omenTimerRef.current = null;
+    }, 2200);
+  };
+
   const runBaseline = useCallback(() => {
     stopWorker();
     const worker = spawnWorker();
@@ -94,9 +136,11 @@ function PlayableApp() {
     setBaselineStates({});
     setPlayerStates({});
     setQueuedActions([]);
+    setQueuedMiracles([]);
     setEvents([]);
     setSelectedEntityId(null);
     setComparisonMode("none");
+    clearOmen();
 
     worker.onmessage = (event) => {
       if (event.data.requestId !== requestId) return;
@@ -131,7 +175,10 @@ function PlayableApp() {
 
   useEffect(() => {
     runBaseline();
-    return stopWorker;
+    return () => {
+      stopWorker();
+      if (omenTimerRef.current !== null) window.clearTimeout(omenTimerRef.current);
+    };
   }, [runBaseline]);
 
   const queueAction = (kind: PlayableInterventionKind) => {
@@ -141,8 +188,16 @@ function PlayableApp() {
     setQueuedActions((current) => [...current, action]);
   };
 
+  const queueMiracle = (kind: DivineMiracleKind, targetId: string | null) => {
+    const definition = miracleDefinition(kind);
+    const miracle = makeQueuedMiracle(kind, targetId, queuedMiracles.length + 1);
+    if (miracle.cost > divinityRemaining) return;
+    setQueuedMiracles((current) => [...current, miracle]);
+    showOmen(definition.invocation);
+  };
+
   const executePlan = () => {
-    if (queuedActions.length === 0 || isRunning) return;
+    if (planSize === 0 || isRunning) return;
     stopWorker();
     const worker = spawnWorker();
     if (!worker) return;
@@ -155,9 +210,12 @@ function PlayableApp() {
       parentBranchId: "main",
       newBranchId: branchId,
       insertionYear,
-      targetIds: [...new Set(queuedActions.map((action) => action.targetId))],
+      targetIds: [...new Set([
+        ...queuedActions.map((action) => action.targetId),
+        ...queuedMiracles.flatMap((miracle) => miracle.targetId ? [miracle.targetId] : ["world"]),
+      ])],
       operation: "alter_condition",
-      parameters: { actions: queuedActions },
+      parameters: { actions: queuedActions, miracles: queuedMiracles },
     };
 
     activeWorkerRef.current = worker;
@@ -204,18 +262,24 @@ function PlayableApp() {
 
   const resetPlan = () => {
     setQueuedActions([]);
+    setQueuedMiracles([]);
     setPlayerStates({});
     setEvents([]);
     setComparisonMode("none");
+    clearOmen();
   };
+
+  const interventionEvents = events.filter(
+    (event) => event.eventType === "player_intervention" || event.eventType === "divine_miracle",
+  );
 
   return (
     <main className="playable-shell">
-      <header className="playable-header">
+      <header className="playable-header playable-header--godmode">
         <div>
-          <span className="eyebrow">Playable causal strategy prototype</span>
+          <span className="eyebrow">Overwatching god · causal strategy simulation</span>
           <h1>CAUSAL CIVILIZATION ENGINE</h1>
-          <p>Select the world, intervene with limited influence, then test whether your history outperforms the baseline.</p>
+          <p>Guide mortals with policy, or bend the world directly through miracle and wrath.</p>
         </div>
         <label className="playable-seed">
           <span>World seed</span>
@@ -227,6 +291,11 @@ function PlayableApp() {
           <strong>{influenceRemaining}</strong>
           <small>{influenceSpent} committed of {STARTING_INFLUENCE}</small>
         </div>
+        <div className="playable-resource playable-resource--divinity">
+          <span className="eyebrow">Divinity</span>
+          <strong>{divinityRemaining}</strong>
+          <small>{divinitySpent} invoked of {STARTING_DIVINITY}</small>
+        </div>
         <div className="playable-resource">
           <span className="eyebrow">Outcome score</span>
           <strong>{playerStates[END_YEAR] ? playerScore.total : baselineScore.total}</strong>
@@ -235,7 +304,7 @@ function PlayableApp() {
       </header>
 
       <section className="playable-workspace">
-        <section className="playable-map-stage">
+        <section className={`playable-map-stage${activeOmen ? " miracle-is-speaking" : ""}`}>
           {baselineState ? (
             <MapViewer
               stateA={baselineState}
@@ -247,6 +316,14 @@ function PlayableApp() {
               activeOverlay="none"
             />
           ) : <div className="playable-map-empty" />}
+
+          {activeOmen && (
+            <div className="divine-omen" role="status" aria-live="polite">
+              <Crown />
+              <strong>{activeOmen}</strong>
+              <span>The world has heard you.</span>
+            </div>
+          )}
 
           {playerState && comparisonMode === "swipe" && (
             <label className="playable-swipe">
@@ -268,8 +345,55 @@ function PlayableApp() {
         </section>
 
         <aside className="playable-director">
+          <section className="divine-panel">
+            <div className="playable-section-heading">
+              <div><span className="eyebrow">Divine dominion</span><h2><Zap /> Miracles</h2></div>
+              <strong className="divinity-readout">{divinityRemaining}</strong>
+            </div>
+            <p>Miracles consume Divinity, not Influence. World miracles require no selected target.</p>
+            <div className="miracle-grid miracle-grid--world">
+              {globalMiracles.map((miracle) => (
+                <button
+                  type="button"
+                  key={miracle.kind}
+                  className={`miracle-card miracle-card--${miracle.disposition}`}
+                  onClick={() => queueMiracle(miracle.kind, null)}
+                  disabled={isRunning || miracle.cost > divinityRemaining}
+                >
+                  <Globe2 />
+                  <strong>{miracle.label}</strong>
+                  <em>“{miracle.invocation}”</em>
+                  <span>{miracle.description}</span>
+                  <b>{miracle.cost} divinity</b>
+                </button>
+              ))}
+            </div>
+            {availableMiracles.length > 0 && (
+              <>
+                <span className="miracle-target-label">Miracles upon selected target</span>
+                <div className="miracle-grid">
+                  {availableMiracles.map((miracle) => (
+                    <button
+                      type="button"
+                      key={miracle.kind}
+                      className={`miracle-card miracle-card--${miracle.disposition}`}
+                      onClick={() => queueMiracle(miracle.kind, selectedEntityId)}
+                      disabled={isRunning || miracle.cost > divinityRemaining}
+                    >
+                      {miracle.disposition === "wrath" || miracle.disposition === "apocalypse" ? <Flame /> : <Sparkles />}
+                      <strong>{miracle.label}</strong>
+                      <em>“{miracle.invocation}”</em>
+                      <span>{miracle.description}</span>
+                      <b>{miracle.cost} divinity</b>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+
           <section>
-            <span className="eyebrow">Selected target</span>
+            <span className="eyebrow">Selected mortal target</span>
             <h2>{selectedEntityId ?? "Nothing selected"}</h2>
             <p>{describeEntity(planningState, selectedEntityId)}</p>
             <div className="playable-action-grid">
@@ -277,6 +401,7 @@ function PlayableApp() {
                 <button
                   type="button"
                   key={action.kind}
+                  className={`action-card action-card--${action.disposition}`}
                   onClick={() => queueAction(action.kind)}
                   disabled={isRunning || action.cost > influenceRemaining}
                 >
@@ -290,28 +415,38 @@ function PlayableApp() {
 
           <section>
             <div className="playable-section-heading">
-              <div><span className="eyebrow">Intervention plan</span><h2>{queuedActions.length} actions</h2></div>
+              <div><span className="eyebrow">Causal decree</span><h2>{planSize} invocations</h2></div>
               <button type="button" className="icon-button" onClick={resetPlan} disabled={isRunning}><Trash2 /></button>
             </div>
             <ol className="playable-plan">
+              {queuedMiracles.map((miracle) => {
+                const definition = miracleDefinition(miracle.kind);
+                return (
+                  <li key={miracle.miracleId} className={`plan-miracle plan-miracle--${definition.disposition}`}>
+                    <span>{definition.label}</span>
+                    <code>{miracle.targetId ?? "THE WHOLE WORLD"}</code>
+                    <b>{miracle.cost} D</b>
+                  </li>
+                );
+              })}
               {queuedActions.map((action) => (
                 <li key={action.actionId}>
                   <span>{action.kind.replaceAll("_", " ")}</span>
                   <code>{action.targetId}</code>
-                  <b>{action.cost}</b>
+                  <b>{action.cost} I</b>
                 </li>
               ))}
-              {queuedActions.length === 0 && <li className="playable-empty">Select map entities and queue interventions.</li>}
+              {planSize === 0 && <li className="playable-empty">Select a target, issue policy, or invoke a world miracle.</li>}
             </ol>
-            <button type="button" className="playable-execute" onClick={executePlan} disabled={isRunning || queuedActions.length === 0}>
-              <Play /> Execute plan from Year {Math.max(1, Math.min(350, currentYear))}
+            <button type="button" className="playable-execute" onClick={executePlan} disabled={isRunning || planSize === 0}>
+              <Play /> Decree history from Year {Math.max(1, Math.min(350, currentYear))}
             </button>
           </section>
 
           <section>
             <span className="eyebrow">Objectives</span>
             <div className="playable-objectives">
-              {objectiveStatus.length === 0 ? <p>Execute a plan to reveal the outcome objectives.</p> : objectiveStatus.map((objective) => (
+              {objectiveStatus.length === 0 ? <p>Execute a decree to reveal the outcome objectives.</p> : objectiveStatus.map((objective) => (
                 <div key={objective.label} className={objective.passed ? "passed" : "failed"}>
                   {objective.passed ? <CheckCircle2 /> : <AlertTriangle />}
                   <span><strong>{objective.label}</strong><small>{objective.detail}</small></span>
@@ -321,14 +456,14 @@ function PlayableApp() {
           </section>
 
           <section className="playable-feed">
-            <span className="eyebrow">Causal event feed</span>
-            {events.filter((event) => event.eventType === "player_intervention").slice(0, 8).map((event) => (
-              <article key={event.eventId}>
+            <span className="eyebrow">Book of causation</span>
+            {interventionEvents.slice(0, 10).map((event) => (
+              <article key={event.eventId} className={event.eventType === "divine_miracle" ? "divine-event" : ""}>
                 <strong>Year {event.time.year}</strong>
-                <p>{String(event.summaryArguments.action)} → {String(event.summaryArguments.targetId)}</p>
+                <p>{String(event.summaryArguments.miracle ?? event.summaryArguments.action)} → {String(event.summaryArguments.target ?? event.summaryArguments.targetId)}</p>
               </article>
             ))}
-            {events.length === 0 && <p>Your interventions and their recorded effects will appear here.</p>}
+            {interventionEvents.length === 0 && <p>Your policies and miracles will be recorded here.</p>}
           </section>
         </aside>
       </section>
