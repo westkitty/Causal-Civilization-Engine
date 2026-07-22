@@ -128,3 +128,44 @@ Domain and runtime foundations for these surfaces exist, but decorative wrappers
 ### Safety note
 
 The legacy Worker path remains deliberately available until the React workbench is migrated and browser-tested. Removing it now would reduce memory only by making the current UI fail, an impressively useless benchmark victory.
+
+## 2026-07-22 — Second adversarial 25-way trust-boundary pass
+
+### Objective
+
+Attack the newly added archive, artifact, CLI, Worker, and branch-workbench systems rather than repeating prior recommendations.
+
+### Branch and scope
+
+- Branch: `upgrade/adversarial-new-25-2026-07-22`.
+- Base: `upgrade/implement-all-25-2026-07-22`.
+- Frozen groups: artifact/archive trust, Worker/CLI execution correctness, branch/divergence semantics.
+- Default branch remained untouched; no merge, PR, release, dependency change, or destructive action.
+
+### Confirmed defects
+
+- artifact verification did not always prove the materialized final state;
+- archive deserialization trusted malformed frames and unsafe patch paths;
+- CLI branching used the legacy cached-state runner and could contaminate a historical snapshot with future parent events;
+- message-only cancellation could not interrupt a synchronous Worker loop;
+- divergence summaries ignored baseline events removed from a branch;
+- branch and intervention identity validation was incomplete.
+
+### Implemented result
+
+- Added structural archive validation and prototype-pollution defenses.
+- Added per-materialization replay-hash verification and strict sequential recording.
+- Hardened artifact provenance, ledger identity, chronology, JSON parsing, and final-state replay validation.
+- Migrated CLI branching to the archive runner, added safe numeric arguments, overwrite protection, warning gates, and help output.
+- Added parent/minimum/maximum/end-year boundaries to archive branch execution.
+- Added optional SharedArrayBuffer atomic cancellation and cleanup.
+- Hardened branch-tree identity and deterministic ancestry.
+- Made divergence accounting symmetric for added, removed, and modified events.
+- Added `src/__tests__/adversarialSecondPass.test.ts`.
+- Full 25-item record: `docs/ADVERSARIAL_SECOND_PASS_2026-07-22.md`.
+
+### Validation state
+
+- Source inspection and GitHub branch writes: confirmed.
+- Runtime lint, build, Vitest, CLI, and browser execution: unavailable in this environment.
+- Proof state: **implemented and source-reviewed; runtime verification blocked**.
