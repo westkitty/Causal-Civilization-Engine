@@ -1,0 +1,343 @@
+.playable-header--godmode {
+  grid-template-columns: minmax(22rem, 1.4fr) minmax(15rem, 0.72fr) repeat(3, minmax(8.5rem, 0.42fr));
+  background:
+    radial-gradient(circle at 72% -40%, rgb(182 129 255 / 0.16), transparent 30rem),
+    radial-gradient(circle at 18% -30%, rgb(255 217 120 / 0.12), transparent 27rem),
+    linear-gradient(115deg, rgb(13 24 30 / 0.99), rgb(5 10 14 / 0.97) 62%, rgb(28 18 13 / 0.94));
+}
+
+.playable-resource--divinity {
+  border-color: rgb(196 155 255 / 0.34);
+  background:
+    radial-gradient(circle at top, rgb(177 119 255 / 0.16), transparent 72%),
+    rgb(8 7 18 / 0.72);
+  box-shadow: 0 0 28px rgb(145 88 255 / 0.08) inset;
+}
+
+.playable-resource--divinity strong {
+  color: #e9d5ff;
+  text-shadow: 0 0 18px rgb(194 142 255 / 0.52);
+}
+
+.divine-panel {
+  position: relative;
+  overflow: hidden;
+  border-color: rgb(192 151 255 / 0.26) !important;
+  background:
+    radial-gradient(circle at 20% 0%, rgb(126 74 195 / 0.17), transparent 18rem),
+    radial-gradient(circle at 100% 30%, rgb(255 197 101 / 0.08), transparent 16rem),
+    linear-gradient(155deg, rgb(17 14 30 / 0.97), rgb(5 10 15 / 0.96)) !important;
+}
+
+.divine-panel::before {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  opacity: 0.16;
+  background-image:
+    radial-gradient(circle, #fff 0 1px, transparent 1.4px),
+    radial-gradient(circle, #d9b6ff 0 1px, transparent 1.4px);
+  background-position: 0 0, 18px 23px;
+  background-size: 47px 47px, 61px 61px;
+  mask-image: linear-gradient(to bottom, black, transparent 84%);
+}
+
+.divine-panel > * {
+  position: relative;
+}
+
+.divine-panel h2 {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.divine-panel h2 svg {
+  width: 1rem;
+  color: #d9b6ff;
+  filter: drop-shadow(0 0 8px rgb(181 116 255 / 0.55));
+}
+
+.divinity-readout {
+  min-width: 2.8rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid rgb(212 178 255 / 0.34);
+  border-radius: 999px;
+  color: #f2e6ff;
+  text-align: center;
+  background: rgb(86 45 136 / 0.32);
+  box-shadow: 0 0 18px rgb(168 93 255 / 0.16);
+}
+
+.miracle-target-label {
+  display: block;
+  margin: 0.85rem 0 0.45rem;
+  color: #d9c8e8;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.miracle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.miracle-grid--world {
+  margin-top: 0.75rem;
+}
+
+.miracle-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.2rem 0.45rem;
+  align-items: start;
+  min-width: 0;
+  padding: 0.72rem;
+  overflow: hidden;
+  border-radius: 0.7rem;
+  text-align: left;
+  isolation: isolate;
+}
+
+.miracle-card::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  content: "";
+  opacity: 0.46;
+}
+
+.miracle-card > svg {
+  grid-row: 1 / 3;
+  width: 1rem;
+  margin-top: 0.12rem;
+}
+
+.miracle-card strong {
+  min-width: 0;
+  color: #fff;
+  font-size: 0.76rem;
+}
+
+.miracle-card em {
+  grid-column: 2 / -1;
+  color: rgb(255 255 255 / 0.78);
+  font-family: Georgia, serif;
+  font-size: 0.63rem;
+  line-height: 1.35;
+}
+
+.miracle-card span {
+  grid-column: 1 / -1;
+  margin-top: 0.18rem;
+  color: rgb(232 237 240 / 0.64);
+  font-size: 0.62rem;
+  line-height: 1.4;
+}
+
+.miracle-card b {
+  grid-column: 3;
+  grid-row: 1;
+  font-size: 0.62rem;
+  white-space: nowrap;
+}
+
+.miracle-card--blessing {
+  border-color: rgb(255 221 132 / 0.42);
+  background: linear-gradient(145deg, rgb(87 68 20 / 0.72), rgb(21 27 22 / 0.94));
+}
+
+.miracle-card--blessing::before {
+  background: radial-gradient(circle at 20% 0%, rgb(255 235 154 / 0.32), transparent 68%);
+}
+
+.miracle-card--blessing > svg,
+.miracle-card--blessing b {
+  color: #ffe59a;
+}
+
+.miracle-card--wonder {
+  border-color: rgb(207 166 255 / 0.46);
+  background: linear-gradient(145deg, rgb(72 42 112 / 0.78), rgb(18 16 35 / 0.96));
+}
+
+.miracle-card--wonder::before {
+  background: radial-gradient(circle at 15% 0%, rgb(211 166 255 / 0.34), transparent 68%);
+}
+
+.miracle-card--wonder > svg,
+.miracle-card--wonder b {
+  color: #e5c6ff;
+}
+
+.miracle-card--wrath {
+  border-color: rgb(255 132 73 / 0.5);
+  background: linear-gradient(145deg, rgb(100 34 16 / 0.84), rgb(31 12 12 / 0.96));
+}
+
+.miracle-card--wrath::before {
+  background: radial-gradient(circle at 20% 0%, rgb(255 94 45 / 0.34), transparent 68%);
+}
+
+.miracle-card--wrath > svg,
+.miracle-card--wrath b {
+  color: #ff9c69;
+}
+
+.miracle-card--apocalypse {
+  border-color: rgb(255 65 65 / 0.58);
+  background:
+    linear-gradient(145deg, rgb(72 4 7 / 0.92), rgb(7 4 8 / 0.99));
+  box-shadow:
+    0 0 0 1px rgb(255 0 0 / 0.1) inset,
+    0 0 22px rgb(197 0 0 / 0.12);
+}
+
+.miracle-card--apocalypse::before {
+  background:
+    radial-gradient(circle at 20% 0%, rgb(255 0 0 / 0.36), transparent 62%),
+    repeating-linear-gradient(135deg, transparent 0 7px, rgb(255 255 255 / 0.022) 7px 8px);
+}
+
+.miracle-card--apocalypse > svg,
+.miracle-card--apocalypse b {
+  color: #ff6868;
+  filter: drop-shadow(0 0 7px rgb(255 0 0 / 0.55));
+}
+
+.miracle-card:hover:not(:disabled) {
+  transform: translateY(-2px) scale(1.008);
+}
+
+.plan-miracle {
+  border-color: rgb(198 158 255 / 0.3) !important;
+  background: linear-gradient(145deg, rgb(51 29 76 / 0.78), rgb(16 18 26 / 0.88)) !important;
+}
+
+.plan-miracle--blessing { border-left: 3px solid #ffe39a !important; }
+.plan-miracle--wonder { border-left: 3px solid #d9b6ff !important; }
+.plan-miracle--wrath { border-left: 3px solid #ff8b55 !important; }
+.plan-miracle--apocalypse { border-left: 3px solid #ff4040 !important; }
+
+.divine-event {
+  padding-left: 0.55rem !important;
+  border-left: 2px solid #d9b6ff;
+  background: linear-gradient(90deg, rgb(125 73 185 / 0.1), transparent);
+}
+
+.divine-event strong {
+  color: #e5c6ff !important;
+}
+
+.divine-omen {
+  position: absolute;
+  z-index: 75;
+  top: 12%;
+  left: 50%;
+  display: grid;
+  place-items: center;
+  width: min(42rem, calc(100% - 3rem));
+  padding: 1.3rem 1.6rem;
+  border: 1px solid rgb(225 194 255 / 0.58);
+  border-radius: 1rem;
+  color: #fff;
+  text-align: center;
+  background:
+    radial-gradient(circle at center, rgb(116 67 177 / 0.42), transparent 78%),
+    rgb(6 7 16 / 0.9);
+  box-shadow:
+    0 28px 90px rgb(0 0 0 / 0.62),
+    0 0 60px rgb(165 99 255 / 0.28),
+    0 0 0 1px rgb(255 255 255 / 0.05) inset;
+  backdrop-filter: blur(18px) saturate(145%);
+  transform: translateX(-50%);
+  animation: divine-omen-arrival 2.2s ease both;
+}
+
+.divine-omen svg {
+  width: 1.6rem;
+  color: #ffe8a3;
+  filter: drop-shadow(0 0 12px rgb(255 219 120 / 0.7));
+}
+
+.divine-omen strong {
+  margin-top: 0.35rem;
+  font-family: Georgia, serif;
+  font-size: clamp(1.15rem, 2.2vw, 2rem);
+  font-weight: 500;
+  letter-spacing: 0.035em;
+  text-shadow: 0 0 24px rgb(207 157 255 / 0.72);
+}
+
+.divine-omen span {
+  margin-top: 0.35rem;
+  color: #cdbed8;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.miracle-is-speaking::after {
+  position: absolute;
+  inset: 0;
+  z-index: 70;
+  pointer-events: none;
+  content: "";
+  background:
+    radial-gradient(circle at center, transparent 22%, rgb(129 75 196 / 0.13) 60%, rgb(6 3 14 / 0.52) 100%),
+    linear-gradient(to bottom, rgb(255 227 151 / 0.06), transparent 28%);
+  animation: divine-world-pulse 2.2s ease both;
+}
+
+.action-card--support { border-left: 2px solid #72dba1; }
+.action-card--tradeoff { border-left: 2px solid #e6bf62; }
+.action-card--coercion { border-left: 2px solid #cf8df0; }
+.action-card--destruction { border-left: 2px solid #e86655; }
+
+@keyframes divine-omen-arrival {
+  0% { opacity: 0; transform: translate(-50%, -22px) scale(0.92); }
+  12% { opacity: 1; transform: translate(-50%, 0) scale(1.015); }
+  78% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -8px) scale(1.02); }
+}
+
+@keyframes divine-world-pulse {
+  0% { opacity: 0; }
+  18% { opacity: 1; }
+  72% { opacity: 0.8; }
+  100% { opacity: 0; }
+}
+
+@media (max-width: 1180px) {
+  .playable-header--godmode {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+
+  .miracle-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .playable-header--godmode {
+    grid-template-columns: 1fr;
+  }
+
+  .divine-omen {
+    top: 8%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .divine-omen,
+  .miracle-is-speaking::after {
+    animation: none;
+  }
+}
