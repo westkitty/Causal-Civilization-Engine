@@ -42,7 +42,8 @@ export function validateTimelineArchive(archive: SerializedTimelineArchive): str
 
   const width = archive.staticState?.mapWidth;
   const height = archive.staticState?.mapHeight;
-  const cellCount = Number.isInteger(width) && Number.isInteger(height) && width > 0 && height > 0
+  const cellCount = typeof width === "number" && typeof height === "number" &&
+      Number.isInteger(width) && Number.isInteger(height) && width > 0 && height > 0
     ? width * height
     : -1;
   if (cellCount < 1) errors.push("Archive map dimensions are invalid");
