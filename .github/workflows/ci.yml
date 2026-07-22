@@ -8,7 +8,7 @@ on:
 
 jobs:
   verify:
-    name: Lint, unit tests, build
+    name: Lint, unit tests, build, budgets
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,6 +23,8 @@ jobs:
         run: npm test
       - name: Production build
         run: npm run build
+      - name: Bundle budgets
+        run: npm run budget
 
   e2e:
     name: Real-browser E2E (Chromium)
@@ -47,3 +49,18 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+  browser-compatibility:
+    name: Browser compatibility smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Run focused cross-browser smoke suite
+        run: npm run test:e2e:cross-browser
