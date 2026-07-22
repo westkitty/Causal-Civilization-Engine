@@ -1,10 +1,19 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
-import App from './App.tsx'
+import './visual-overhaul.css'
+import './map-observatory.css'
+import './map-scan-effects.css'
+import './observatory-shell.css'
+import './playable.css'
+import './miracles.css'
+import './rendering/standardOrbitControlsPolicy'
+import './rendering/instancedMeshUploadPolicy'
+import './rendering/rendererVisualPolicy'
+import PlayableApp from './PlayableApp.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <PlayableApp />
   </StrictMode>,
 )

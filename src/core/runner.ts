@@ -3,6 +3,8 @@ import { generateWorld } from "../geography/terrain";
 import { CausalLedger } from "../timelines/ledger";
 import { Branch } from "../timelines/branch";
 import type { TimelineIntervention } from "../timelines/branch";
+import { applyTimelineInterventionEffects } from "../timelines/interventionEffects";
+import { applyTimelineMiracleEffects } from "../timelines/miracleEffects";
 import { simulateYear } from "./scheduler";
 import { cloneState } from "./state";
 
@@ -14,10 +16,8 @@ export function runFullSimulation(
 ): WorldState {
   const state = generateWorld(seed, 125, 125);
 
-  // Year 0 initialization
   simulateYear(state, ledger, branch, 0);
 
-  // Run years 1 to endYear
   for (let year = 1; year <= endYear; year++) {
     simulateYear(state, ledger, branch, year);
   }
@@ -26,10 +26,7 @@ export function runFullSimulation(
 }
 
 export interface ResimulateOptions {
-  // Parent per-year states, used only to backfill any pre-snapshot prefix years
-  // that this branch did not itself re-simulate (identical by determinism).
   parentCachedStates?: Record<number, WorldState>;
-  // Progress callback invoked while simulating forward from the intervention.
   onProgress?: (completedYear: number, endYear: number) => void;
 }
 
@@ -43,12 +40,8 @@ export function resimulateBranch(
   const branchId = intervention.newBranchId;
   const branch = new Branch(branchId, parentBranch.branchId, intervention);
   const ledger = new CausalLedger(branchId);
-
-  // Per-year state cache for this branch. This is authoritative: the worker and
-  // UI consume it directly, so the branch is simulated exactly ONCE.
   const cachedStates: Record<number, WorldState> = {};
 
-  // Find the latest snapshot in parentBranch before the intervention year
   const snapshot = parentBranch.getLatestSnapshotBefore(intervention.insertionYear);
 
   let startYear = 0;
@@ -56,18 +49,15 @@ export function resimulateBranch(
 
   if (snapshot) {
     state = cloneState(snapshot.state);
-    // Restore ledger events up to snapshot year
     for (const evId of Object.keys(snapshot.ledgerEvents)) {
       ledger.addEvent(snapshot.ledgerEvents[evId]);
     }
     startYear = snapshot.year + 1;
     cachedStates[snapshot.year] = cloneState(state);
 
-    // Copy year hashes up to snapshot year
     for (let y = 0; y <= snapshot.year; y++) {
       branch.recordYearHash(y, parentBranch.yearHashes[y]);
     }
-    // Copy snapshots up to snapshot year
     for (const yStr of Object.keys(parentBranch.snapshots)) {
       const y = Number(yStr);
       if (y <= snapshot.year) {
@@ -76,19 +66,14 @@ export function resimulateBranch(
     }
   } else {
     state = generateWorld(parentBranch.snapshots[0]?.state.seed || "default", 125, 125);
-    // With no earlier snapshot, the prefix loop owns Year 0. This also lets an
-    // insertion at Year 0 occur before bootstrap without simulating Year 0 twice.
     startYear = 0;
   }
 
-  // Simulate the (still identical) prefix up to the intervention year, caching
-  // each year. These match the parent by construction.
   for (let year = startYear; year < intervention.insertionYear; year++) {
     simulateYear(state, ledger, branch, year);
     cachedStates[year] = cloneState(state);
   }
 
-  // Record the intervention event to the ledger
   ledger.addEvent({
     eventId: intervention.interventionId,
     time: { year: intervention.insertionYear },
@@ -106,7 +91,11 @@ export function resimulateBranch(
     confidence: 1.0,
   });
 
-  // Run years forward to endYear, caching each and reporting progress.
+  // Mortal policy changes and divine miracles are both applied at the insertion
+  // boundary, before the normal yearly systems propagate their consequences.
+  applyTimelineInterventionEffects(state, ledger, intervention);
+  applyTimelineMiracleEffects(state, ledger, intervention);
+
   for (let year = intervention.insertionYear; year <= endYear; year++) {
     simulateYear(state, ledger, branch, year);
     cachedStates[year] = cloneState(state);
@@ -115,7 +104,6 @@ export function resimulateBranch(
     }
   }
 
-  // Backfill any pre-snapshot prefix years the branch did not itself simulate.
   if (options?.parentCachedStates) {
     for (let y = 0; y < intervention.insertionYear; y++) {
       if (!(y in cachedStates) && options.parentCachedStates[y]) {
