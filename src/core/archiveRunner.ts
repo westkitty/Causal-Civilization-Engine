@@ -23,14 +23,25 @@ function checkCancellation(options?: ArchiveRunOptions): void {
   if (options?.shouldCancel?.()) throw new Error("Simulation cancelled");
 }
 
+function assertYear(value: number, name: string, minimum = 0): void {
+  if (!Number.isInteger(value) || value < minimum) {
+    throw new Error(`${name} must be an integer greater than or equal to ${minimum}`);
+  }
+}
+
 export function runBaselineArchive(
   seed: string,
   endYear = 400,
   options?: ArchiveRunOptions,
 ): ArchiveRunResult {
+  if (!seed.trim()) throw new Error("Simulation seed is required");
+  assertYear(endYear, "End year");
+  if (options?.checkpointInterval !== undefined) assertYear(options.checkpointInterval, "Checkpoint interval", 1);
+
   const branch = new Branch("main");
   const ledger = new CausalLedger("main");
   const state = generateWorld(seed, 125, 125);
+  checkCancellation(options);
   simulateYear(state, ledger, branch, 0);
   const builder = TimelineArchive.create("main", state, options?.checkpointInterval ?? 25);
 
@@ -51,8 +62,24 @@ export function runBranchArchive(input: {
   options?: ArchiveRunOptions;
 }): ArchiveRunResult {
   const { parentArchive, parentEvents, intervention, endYear = parentArchive.maxYear, options } = input;
+  assertYear(intervention.insertionYear, "Intervention year");
+  assertYear(endYear, "End year");
+  if (intervention.parentBranchId !== parentArchive.branchId) {
+    throw new Error(`Intervention parent ${intervention.parentBranchId} does not match archive ${parentArchive.branchId}`);
+  }
+  if (intervention.insertionYear <= parentArchive.minYear) {
+    throw new Error(`Intervention year must be after archived Year ${parentArchive.minYear}`);
+  }
+  if (intervention.insertionYear > parentArchive.maxYear) {
+    throw new Error(`Intervention year cannot exceed parent Year ${parentArchive.maxYear}`);
+  }
+  if (endYear < intervention.insertionYear) {
+    throw new Error("Branch end year cannot precede its intervention");
+  }
+  if (options?.checkpointInterval !== undefined) assertYear(options.checkpointInterval, "Checkpoint interval", 1);
+
   const parent = TimelineArchive.deserialize(parentArchive);
-  const priorYear = Math.max(parentArchive.minYear, intervention.insertionYear - 1);
+  const priorYear = intervention.insertionYear - 1;
   const priorState = parent.materialize(priorYear);
   if (!priorState) throw new Error(`Parent archive cannot materialize Year ${priorYear}`);
 
@@ -69,7 +96,8 @@ export function runBranchArchive(input: {
 
   for (let year = parentArchive.minYear; year < intervention.insertionYear; year++) {
     const hash = parentArchive.yearHashes[year];
-    if (hash) branch.recordYearHash(year, hash);
+    if (!hash) throw new Error(`Parent archive is missing Year ${year} hash`);
+    branch.recordYearHash(year, hash);
   }
 
   const state = cloneState(priorState);
@@ -90,12 +118,14 @@ export function runBranchArchive(input: {
     confidence: 1,
   });
 
+  checkCancellation(options);
   simulateYear(state, ledger, branch, intervention.insertionYear);
   const builder = TimelineArchive.create(
     intervention.newBranchId,
     state,
     options?.checkpointInterval ?? parentArchive.checkpointInterval,
   );
+  options?.onProgress?.(intervention.insertionYear, endYear);
   for (let year = intervention.insertionYear + 1; year <= endYear; year++) {
     checkCancellation(options);
     simulateYear(state, ledger, branch, year);
