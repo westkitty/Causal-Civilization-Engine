@@ -1,0 +1,92 @@
+/* Active observatory scan effects layered above the map canvas.
+ * Pointer events remain disabled so camera and picking behavior are untouched.
+ */
+
+.map-stage::before,
+.map-stage::after {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  content: "";
+}
+
+.map-stage::before {
+  background:
+    radial-gradient(ellipse at center, transparent 48%, rgb(0 5 7 / 0.08) 68%, rgb(0 3 5 / 0.46) 100%),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.012) 50%, transparent 50%);
+  background-size: auto, 100% 4px;
+  mix-blend-mode: multiply;
+}
+
+.map-stage::after {
+  top: -42%;
+  bottom: auto;
+  height: 38%;
+  opacity: 0;
+  background:
+    linear-gradient(
+      to bottom,
+      transparent 0%,
+      rgb(85 212 197 / 0.015) 34%,
+      rgb(85 212 197 / 0.16) 49%,
+      rgb(255 226 154 / 0.22) 50%,
+      rgb(85 212 197 / 0.11) 52%,
+      transparent 100%
+    );
+  filter: blur(0.4px);
+  mix-blend-mode: screen;
+}
+
+.map-canvas-wrap {
+  transform: translateZ(0);
+}
+
+.map-canvas-wrap:hover {
+  border-color: rgb(130 206 193 / 0.32);
+  box-shadow:
+    0 32px 76px rgb(0 0 0 / 0.46),
+    0 0 0 1px rgb(255 255 255 / 0.035) inset,
+    0 0 62px rgb(46 122 113 / 0.12) inset;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .map-stage::after {
+    animation: observatory-scan-pass 9s cubic-bezier(0.42, 0, 0.58, 1) infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-stage::after {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .map-stage::before {
+    background:
+      radial-gradient(ellipse at center, transparent 58%, rgb(0 3 5 / 0.32) 100%),
+      linear-gradient(to bottom, rgb(255 255 255 / 0.008) 50%, transparent 50%);
+    background-size: auto, 100% 5px;
+  }
+}
+
+@keyframes observatory-scan-pass {
+  0%, 12% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+
+  18% {
+    opacity: 0.68;
+  }
+
+  74% {
+    opacity: 0.38;
+  }
+
+  82%, 100% {
+    transform: translateY(370%);
+    opacity: 0;
+  }
+}
