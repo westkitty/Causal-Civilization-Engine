@@ -1,0 +1,363 @@
+.playable-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  background: var(--color-app);
+}
+
+.playable-header {
+  z-index: 50;
+  display: grid;
+  grid-template-columns: minmax(26rem, 1.5fr) minmax(17rem, 0.8fr) minmax(10rem, 0.45fr) minmax(10rem, 0.45fr);
+  gap: 1rem;
+  align-items: center;
+  padding: 0.8rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+  background: linear-gradient(115deg, rgb(15 29 32 / 0.98), rgb(5 12 14 / 0.96) 64%, rgb(30 25 14 / 0.9));
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.36);
+}
+
+.playable-header h1 {
+  margin: 0.1rem 0 0;
+  font-size: clamp(1.25rem, 1.8vw, 1.75rem);
+  letter-spacing: 0.05em;
+}
+
+.playable-header p {
+  max-width: 52rem;
+  margin-top: 0.35rem;
+  color: var(--color-text-secondary);
+  font-size: 0.82rem;
+}
+
+.playable-seed {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem 0.5rem;
+}
+
+.playable-seed > span {
+  grid-column: 1 / -1;
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.playable-seed input {
+  min-width: 0;
+  height: 2.6rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.55rem;
+  color: var(--color-baseline);
+  background: var(--color-recessed);
+}
+
+.playable-seed button,
+.playable-execute {
+  display: inline-flex;
+  gap: 0.45rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.55rem;
+  font-weight: 800;
+}
+
+.playable-seed svg,
+.playable-execute svg {
+  width: 1rem;
+}
+
+.playable-resource {
+  min-width: 0;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  background: rgb(2 9 11 / 0.58);
+}
+
+.playable-resource strong {
+  display: block;
+  color: var(--color-accent-strong);
+  font-size: 1.55rem;
+  line-height: 1.1;
+}
+
+.playable-resource small {
+  display: block;
+  overflow: hidden;
+  margin-top: 0.2rem;
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playable-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.playable-map-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #050b0d;
+}
+
+.playable-map-stage > .map-canvas-wrap,
+.playable-map-stage > .map-canvas,
+.playable-map-stage > div:first-child {
+  width: 100%;
+  height: 100%;
+}
+
+.playable-map-empty {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, rgb(34 76 72 / 0.22), transparent 45%), #071013;
+}
+
+.playable-director {
+  min-height: 0;
+  padding: 0.8rem;
+  overflow-y: auto;
+  border-left: 1px solid var(--color-border);
+  background: linear-gradient(180deg, rgb(17 29 32 / 0.98), rgb(7 14 17 / 0.99));
+}
+
+.playable-director section {
+  padding: 0.9rem;
+  margin-bottom: 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.8rem;
+  background: rgb(5 13 15 / 0.74);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 0.2);
+}
+
+.playable-director h2 {
+  margin: 0.2rem 0 0.35rem;
+  overflow-wrap: anywhere;
+  font-size: 1rem;
+}
+
+.playable-director p {
+  color: var(--color-text-secondary);
+  font-size: 0.76rem;
+}
+
+.playable-action-grid {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.8rem;
+}
+
+.playable-action-grid button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.18rem 0.5rem;
+  padding: 0.7rem;
+  border-radius: 0.65rem;
+  text-align: left;
+}
+
+.playable-action-grid button strong {
+  color: var(--color-text);
+}
+
+.playable-action-grid button span {
+  grid-column: 1 / -1;
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+}
+
+.playable-action-grid button b {
+  grid-column: 2;
+  grid-row: 1;
+  color: var(--color-accent-strong);
+  font-size: 0.7rem;
+}
+
+.playable-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.playable-plan {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0;
+  margin: 0.7rem 0;
+  list-style: none;
+}
+
+.playable-plan li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.15rem 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid rgb(139 190 181 / 0.13);
+  border-radius: 0.5rem;
+  background: rgb(12 24 27 / 0.7);
+  font-size: 0.7rem;
+}
+
+.playable-plan code {
+  grid-column: 1;
+  color: var(--color-text-muted);
+  font-size: 0.62rem;
+}
+
+.playable-plan b {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  color: var(--color-accent-strong);
+}
+
+.playable-plan .playable-empty {
+  display: block;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.playable-execute {
+  width: 100%;
+  padding: 0.7rem;
+  border-color: var(--color-branch);
+  color: #1d1008;
+  background: linear-gradient(135deg, #ffc07f, #df7e4a);
+}
+
+.playable-objectives {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.65rem;
+}
+
+.playable-objectives > div {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.5rem;
+  border-radius: 0.55rem;
+  background: rgb(255 255 255 / 0.025);
+}
+
+.playable-objectives svg {
+  width: 1rem;
+}
+
+.playable-objectives .passed svg { color: var(--color-success); }
+.playable-objectives .failed svg { color: var(--color-error); }
+
+.playable-objectives span,
+.playable-objectives small {
+  display: block;
+}
+
+.playable-objectives small {
+  color: var(--color-text-muted);
+  font-size: 0.65rem;
+}
+
+.playable-feed article {
+  padding: 0.55rem 0;
+  border-bottom: 1px dashed var(--color-border);
+}
+
+.playable-feed article:last-child { border-bottom: 0; }
+.playable-feed article strong { color: var(--color-accent-strong); font-size: 0.68rem; }
+.playable-feed article p { margin-top: 0.15rem; }
+
+.playable-loader,
+.playable-error {
+  position: absolute;
+  z-index: 80;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  place-items: center;
+  width: min(26rem, calc(100% - 2rem));
+  padding: 1.2rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 0.9rem;
+  background: rgb(8 18 21 / 0.96);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 0.58);
+  transform: translate(-50%, -50%);
+}
+
+.playable-loader svg,
+.playable-error svg {
+  width: 1.4rem;
+  color: var(--color-accent-strong);
+}
+
+.playable-loader progress {
+  width: 100%;
+  margin: 0.8rem 0 0.35rem;
+}
+
+.playable-swipe {
+  position: absolute;
+  z-index: 60;
+  right: 1rem;
+  bottom: 1rem;
+  left: 1rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  background: rgb(5 14 16 / 0.86);
+  font-size: 0.68rem;
+  backdrop-filter: blur(12px);
+}
+
+.playable-swipe input { width: 100%; }
+
+@media (max-width: 1050px) {
+  .playable-header {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .playable-workspace {
+    grid-template-columns: minmax(0, 1fr) 20rem;
+  }
+}
+
+@media (max-width: 760px) {
+  .playable-shell {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .playable-header,
+  .playable-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .playable-map-stage {
+    min-height: 60dvh;
+  }
+
+  .playable-director {
+    overflow: visible;
+    border-top: 1px solid var(--color-border);
+    border-left: 0;
+  }
+}
