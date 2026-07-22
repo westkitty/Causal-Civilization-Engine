@@ -3,6 +3,9 @@ import { Branch } from "../timelines/branch";
 import { CausalLedger } from "../timelines/ledger";
 import { simulateYear } from "./scheduler";
 import { cloneState } from "./state";
+import { attachReplayDiagnostics } from "./replayIntegration";
+
+const workerRuntime = { execution: "worker", transport: "structured-clone" };
 
 // Listen to parent thread
 self.onmessage = (e: MessageEvent) => {
@@ -12,7 +15,7 @@ self.onmessage = (e: MessageEvent) => {
     if (type === "RUN_BASELINE") {
       const branch = new Branch("main");
       const ledger = new CausalLedger("main");
-      
+
       const state = runFullSimulation(seed, branch, ledger, 0); // Initialize Year 0
       const cachedStates: Record<number, any> = { 0: cloneState(state) };
 
@@ -31,16 +34,18 @@ self.onmessage = (e: MessageEvent) => {
         }
       }
 
-      self.postMessage({
-        type: "COMPLETE",
-        requestId,
-        result: {
+      const result = attachReplayDiagnostics(
+        seed,
+        {
           cachedStates,
           yearHashes: branch.yearHashes,
           events: ledger.events,
           snapshots: branch.snapshots,
         },
-      });
+        workerRuntime,
+      );
+
+      self.postMessage({ type: "COMPLETE", requestId, result });
     } else if (type === "RUN_BRANCH") {
       // Reconstruct parent branch state and ledger
       const parentBranch = new Branch(parentBranchId);
@@ -69,25 +74,28 @@ self.onmessage = (e: MessageEvent) => {
               endYear: total,
             });
           },
-        }
+        },
       );
 
-      self.postMessage({
-        type: "COMPLETE",
-        requestId,
-        result: {
+      const replaySeed = parentCachedStates?.[0]?.seed ?? seed ?? "unknown";
+      const result = attachReplayDiagnostics(
+        replaySeed,
+        {
           cachedStates,
           yearHashes: subBranch.yearHashes,
           events: subLedger.events,
           snapshots: subBranch.snapshots,
         },
-      });
+        { ...workerRuntime, branch: intervention?.newBranchId ?? "unknown" },
+      );
+
+      self.postMessage({ type: "COMPLETE", requestId, result });
     }
-  } catch (err: any) {
+  } catch (err: unknown) {
     self.postMessage({
       type: "ERROR",
       requestId,
-      message: err.message || String(err),
+      message: err instanceof Error ? err.message : String(err),
     });
   }
 };
