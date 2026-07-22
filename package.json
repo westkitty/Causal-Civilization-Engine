@@ -6,10 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "budget": "node scripts/check-budgets.mjs",
+    "cli": "vite-node src/cli.ts",
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run --no-file-parallelism",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:cross-browser": "playwright test --project=chromium --project=firefox --project=webkit"
   },
   "dependencies": {
     "lucide-react": "^1.24.0",
