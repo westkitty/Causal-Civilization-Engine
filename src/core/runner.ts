@@ -4,6 +4,7 @@ import { CausalLedger } from "../timelines/ledger";
 import { Branch } from "../timelines/branch";
 import type { TimelineIntervention } from "../timelines/branch";
 import { applyTimelineInterventionEffects } from "../timelines/interventionEffects";
+import { applyTimelineMiracleEffects } from "../timelines/miracleEffects";
 import { simulateYear } from "./scheduler";
 import { cloneState } from "./state";
 
@@ -90,10 +91,10 @@ export function resimulateBranch(
     confidence: 1.0,
   });
 
-  // Apply player-authored state changes immediately before the insertion year's
-  // normal simulation systems run. Their consequences therefore propagate
-  // through hazards, transport, economy, demography, politics, and settlement.
+  // Mortal policy changes and divine miracles are both applied at the insertion
+  // boundary, before the normal yearly systems propagate their consequences.
   applyTimelineInterventionEffects(state, ledger, intervention);
+  applyTimelineMiracleEffects(state, ledger, intervention);
 
   for (let year = intervention.insertionYear; year <= endYear; year++) {
     simulateYear(state, ledger, branch, year);
