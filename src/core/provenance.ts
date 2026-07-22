@@ -67,22 +67,17 @@ export function createSimulationArtifact(input: {
     },
   };
 
-  return {
-    provenance,
-    archive: structuredClone(archive),
-    events: structuredClone(events),
-  };
+  return { provenance, archive: structuredClone(archive), events: structuredClone(events) };
 }
 
 export function validateSimulationArtifact(artifact: SimulationArtifact): string[] {
   const errors: string[] = [];
   if (!artifact || typeof artifact !== "object") return ["Artifact must be an object"];
-  if (artifact.provenance?.artifactVersion !== SIMULATION_ARTIFACT_VERSION) {
-    errors.push(`Unsupported artifact version ${artifact.provenance?.artifactVersion}`);
-  }
+  if (artifact.provenance?.artifactVersion !== SIMULATION_ARTIFACT_VERSION) errors.push(`Unsupported artifact version ${artifact.provenance?.artifactVersion}`);
   if (artifact.provenance?.engine !== "causal-civilization-engine") errors.push("Artifact engine identifier is invalid");
   if (artifact.provenance?.engineSchemaVersion !== 1) errors.push("Artifact engine schema version is unsupported");
-  if (Number.isNaN(Date.parse(artifact.provenance?.generatedAt))) errors.push("Artifact generatedAt is invalid");
+  const generatedAt = artifact.provenance?.generatedAt;
+  if (typeof generatedAt !== "string" || Number.isNaN(Date.parse(generatedAt))) errors.push("Artifact generatedAt is invalid");
 
   errors.push(...validateTimelineArchive(artifact.archive).map(error => `Archive: ${error}`));
   if (artifact.provenance?.branchId !== artifact.archive?.branchId) errors.push("Provenance branchId does not match archive");
@@ -90,42 +85,26 @@ export function validateSimulationArtifact(artifact: SimulationArtifact): string
   if (artifact.provenance?.startYear !== artifact.archive?.minYear) errors.push("Provenance startYear does not match archive");
   if (artifact.provenance?.endYear !== artifact.archive?.maxYear) errors.push("Provenance endYear does not match archive");
   if (artifact.provenance?.intervention) {
-    if (artifact.provenance.intervention.newBranchId !== artifact.provenance.branchId) {
-      errors.push("Intervention newBranchId does not match artifact branchId");
-    }
-    if (artifact.provenance.intervention.parentBranchId !== artifact.provenance.parentBranchId) {
-      errors.push("Intervention parentBranchId does not match provenance");
-    }
+    if (artifact.provenance.intervention.newBranchId !== artifact.provenance.branchId) errors.push("Intervention newBranchId does not match artifact branchId");
+    if (artifact.provenance.intervention.parentBranchId !== artifact.provenance.parentBranchId) errors.push("Intervention parentBranchId does not match provenance");
   }
 
-  if (deterministicHash(artifact.archive) !== artifact.provenance?.archiveHash) {
-    errors.push("Archive hash does not match provenance");
-  }
-  if (deterministicHash(artifact.events) !== artifact.provenance?.ledgerHash) {
-    errors.push("Ledger hash does not match provenance");
-  }
+  if (deterministicHash(artifact.archive) !== artifact.provenance?.archiveHash) errors.push("Archive hash does not match provenance");
+  if (deterministicHash(artifact.events) !== artifact.provenance?.ledgerHash) errors.push("Ledger hash does not match provenance");
   const finalHash = artifact.archive?.yearHashes?.[artifact.archive.maxYear];
-  if (finalHash !== artifact.provenance?.finalStateHash) {
-    errors.push("Final state hash does not match archive metadata");
-  }
+  if (finalHash !== artifact.provenance?.finalStateHash) errors.push("Final state hash does not match archive metadata");
 
   for (const [eventId, event] of Object.entries(artifact.events ?? {})) {
     if (event.eventId !== eventId) errors.push(`Ledger key ${eventId} does not match eventId ${event.eventId}`);
-    if (event.branchId !== artifact.provenance?.branchId) {
-      errors.push(`Event ${eventId} branchId does not match artifact branch`);
-    }
-    if (!Number.isInteger(event.time?.year) || event.time.year < artifact.archive?.minYear || event.time.year > artifact.archive?.maxYear) {
-      errors.push(`Event ${eventId} has an out-of-range year`);
-    }
+    if (event.branchId !== artifact.provenance?.branchId) errors.push(`Event ${eventId} branchId does not match artifact branch`);
+    if (!Number.isInteger(event.time?.year) || event.time.year < 0 || event.time.year > artifact.archive?.maxYear) errors.push(`Event ${eventId} has an out-of-range year`);
   }
 
   if (errors.length === 0) {
     try {
       const replayed = TimelineArchive.deserialize(artifact.archive).materialize(artifact.archive.maxYear);
       if (!replayed) errors.push("Final state cannot be materialized");
-      else if (deterministicHash(replayed) !== artifact.provenance.finalStateHash) {
-        errors.push("Materialized final state hash does not match provenance");
-      }
+      else if (deterministicHash(replayed) !== artifact.provenance.finalStateHash) errors.push("Materialized final state hash does not match provenance");
     } catch (error) {
       errors.push(`Archive replay failed: ${error instanceof Error ? error.message : String(error)}`);
     }
