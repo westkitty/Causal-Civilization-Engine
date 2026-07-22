@@ -74,3 +74,57 @@ Adversarially review the current repository without repeating the extensive clos
 ### Next bounded action
 
 Implement and benchmark static-world separation plus checkpoint/delta year storage, then remove the full `parentCachedStates` branch Worker payload while preserving current tested-runtime hashes and year-materialization equality.
+
+## 2026-07-22 — Implement-all-25 foundation and migration pass
+
+### Objective
+
+Implement every recommendation that could be made safely through source-only GitHub access, while refusing to mislabel unexecuted renderer and React migrations as complete.
+
+### Branch and delivery
+
+- Branch: `upgrade/implement-all-25-2026-07-22`.
+- Base: `upgrade/adversarial-25-2026-07-22`.
+- Default branch remained untouched.
+- GitHub connector writes created individual remote commits automatically.
+- No pull request, merge, release, deployment, or force operation was performed.
+
+### Implemented systems
+
+- `src/timelines/archive.ts`: immutable geography separation, dynamic checkpoints, per-year patches, bounded LRU materialization, serialization.
+- `src/core/archiveRunner.ts`: baseline and branch simulation directly into archives without full per-year state records.
+- `src/core/workerProtocol.ts` and `src/core/simulation.worker.ts`: versioned compact requests, cooperative cancellation, archive responses, legacy compatibility route.
+- `src/core/denseGridTransfer.ts`: typed-array encoding/decoding and transferable buffer collection for dense grids.
+- `src/core/provenance.ts`: versioned artifacts, archive/ledger/final-state integrity hashes, parse/serialize validation.
+- `src/cli.ts`: headless `simulate`, `verify`, and `branch` commands.
+- `src/timelines/ledger.ts`: detached immutable compatibility view, validated import/export, indexes by year/entity/type/correlation.
+- `src/timelines/workbench.ts`: intervention validation, named branch tree, divergence summaries.
+- `scripts/check-budgets.mjs`: bundle and optional artifact budget enforcement.
+- Playwright and CI: focused Chromium/Firefox/WebKit shell compatibility gate plus existing authoritative Chromium suite.
+- Tests: archive reconstruction, static-world lock, artifact integrity, intervention validation, branch tree, divergence summary.
+
+### Incomplete coupled migrations
+
+The following were not marked complete because they require a runnable browser and coordinated React/Three.js changes:
+
+- switching `App.tsx` fully from the legacy state-record protocol to archive materialization;
+- lazy-loading Three.js and `MapViewer`;
+- geometry instancing and incremental GPU resource updates;
+- Inspector-level React memoization;
+- entity-history virtualization;
+- replacing the one-button bridge action with a visible intervention composer;
+- rendering a visible multi-branch tree and divergence-summary panel.
+
+Domain and runtime foundations for these surfaces exist, but decorative wrappers were not used to fabricate completion.
+
+### Validation state
+
+- Source/API inspection: completed.
+- Branch divergence from base: confirmed through GitHub compare.
+- Runtime lint, TypeScript build, Vitest, CLI, Chromium, Firefox, and WebKit: not executed in this environment.
+- Merge readiness: **not established**.
+- Required commands are recorded in `docs/IMPLEMENT_ALL_25_STATUS_2026-07-22.md`.
+
+### Safety note
+
+The legacy Worker path remains deliberately available until the React workbench is migrated and browser-tested. Removing it now would reduce memory only by making the current UI fail, an impressively useless benchmark victory.
