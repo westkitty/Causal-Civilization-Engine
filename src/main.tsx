@@ -5,6 +5,7 @@ import './visual-overhaul.css'
 import './map-observatory.css'
 import './map-scan-effects.css'
 import './observatory-shell.css'
+import './rendering/instancedMeshUploadPolicy'
 import './rendering/rendererVisualPolicy'
 import App from './App.tsx'
 
