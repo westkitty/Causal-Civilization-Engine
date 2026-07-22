@@ -1,17 +1,24 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
-import { resimulateBranch } from "./core/runner";
-import { simulateYear } from "./core/scheduler";
-import { generateWorld } from "./geography/terrain";
-import { Branch } from "./timelines/branch";
+import { runBaselineArchive, runBranchArchive } from "./core/archiveRunner";
 import type { TimelineIntervention } from "./timelines/branch";
 import { CausalLedger } from "./timelines/ledger";
 import { TimelineArchive } from "./timelines/archive";
-import { createSimulationArtifact, parseSimulationArtifact, serializeSimulationArtifact } from "./core/provenance";
+import { validateIntervention } from "./timelines/workbench";
+import { deterministicHash } from "./core/hashing";
+import {
+  createSimulationArtifact,
+  parseSimulationArtifact,
+  serializeSimulationArtifact,
+} from "./core/provenance";
 
 function argument(name: string, fallback?: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);
   return index >= 0 ? process.argv[index + 1] : fallback;
+}
+
+function hasFlag(name: string): boolean {
+  return process.argv.includes(`--${name}`);
 }
 
 function required(name: string): string {
@@ -20,35 +27,46 @@ function required(name: string): string {
   return value;
 }
 
+function integerArgument(name: string, fallback: number, minimum = 0): number {
+  const raw = argument(name, String(fallback));
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < minimum) {
+    throw new Error(`--${name} must be an integer greater than or equal to ${minimum}`);
+  }
+  return value;
+}
+
+async function writeArtifact(path: string, contents: string): Promise<void> {
+  try {
+    await writeFile(path, contents, { encoding: "utf8", flag: hasFlag("force") ? "w" : "wx" });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") throw new Error(`Refusing to overwrite ${path}; pass --force to replace it`);
+    throw error;
+  }
+}
+
 async function simulate(): Promise<void> {
   const seed = argument("seed", "bridge-emergence-001")!;
-  const endYear = Number(argument("years", "400"));
+  const endYear = integerArgument("years", 400);
+  const checkpointInterval = integerArgument("checkpoint", 25, 1);
   const output = argument("output", `cce-${seed}-${endYear}.json`)!;
-  const branch = new Branch("main");
-  const ledger = new CausalLedger("main");
-  const state = generateWorld(seed, 125, 125);
   const started = performance.now();
-
-  simulateYear(state, ledger, branch, 0);
-  const archive = TimelineArchive.create("main", state);
-  for (let year = 1; year <= endYear; year++) {
-    simulateYear(state, ledger, branch, year);
-    archive.record(state, branch.yearHashes[year]);
-  }
-
+  const result = runBaselineArchive(seed, endYear, { checkpointInterval });
   const artifact = createSimulationArtifact({
-    archive: archive.serialize(),
-    events: ledger.exportEvents(),
+    archive: result.archive,
+    events: result.ledger.exportEvents(),
+    replayVerified: true,
   });
-  await writeFile(output, serializeSimulationArtifact(artifact), "utf8");
+  await writeArtifact(output, serializeSimulationArtifact(artifact));
   console.log(JSON.stringify({
     command: "simulate",
     seed,
     endYear,
+    checkpointInterval,
     output,
-    finalHash: branch.yearHashes[endYear],
+    finalHash: result.branch.yearHashes[endYear],
     elapsedMs: Math.round(performance.now() - started),
-    finalStateYear: state.year,
   }, null, 2));
 }
 
@@ -58,14 +76,19 @@ async function verify(): Promise<void> {
   const archive = TimelineArchive.deserialize(artifact.archive);
   const finalState = archive.materialize(artifact.provenance.endYear);
   if (!finalState) throw new Error("Artifact final state cannot be materialized");
+  const replayedHash = deterministicHash(finalState);
+  if (replayedHash !== artifact.provenance.finalStateHash) {
+    throw new Error(`Replayed final hash mismatch: ${replayedHash} != ${artifact.provenance.finalStateHash}`);
+  }
   console.log(JSON.stringify({
     command: "verify",
     input,
     branchId: artifact.provenance.branchId,
     seed: artifact.provenance.seed,
     years: [artifact.provenance.startYear, artifact.provenance.endYear],
-    finalHash: artifact.provenance.finalStateHash,
+    finalHash: replayedHash,
     finalStateYear: finalState.year,
+    eventCount: Object.keys(artifact.events).length,
     status: "valid",
   }, null, 2));
 }
@@ -74,22 +97,16 @@ async function branch(): Promise<void> {
   const input = required("input");
   const output = required("output");
   const target = required("target");
-  const year = Number(argument("year", "10"));
   const source = parseSimulationArtifact(await readFile(input, "utf8"));
-  const parentBranch = new Branch(source.provenance.branchId);
-  parentBranch.yearHashes = source.archive.yearHashes;
-  const parentLedger = new CausalLedger(source.provenance.branchId);
-  parentLedger.importEvents(source.events);
+  const year = integerArgument("year", 10, source.archive.minYear);
+  const endYear = integerArgument("years", source.provenance.endYear, year);
+  if (year > source.archive.maxYear) throw new Error(`--year cannot exceed parent Year ${source.archive.maxYear}`);
+
   const parentArchive = TimelineArchive.deserialize(source.archive);
-  const state = parentArchive.materialize(year - 1);
-  if (!state) throw new Error(`Artifact cannot materialize Year ${year - 1}`);
-  parentBranch.snapshots[year - 1] = {
-    year: year - 1,
-    state,
-    ledgerEvents: parentLedger.exportEvents(),
-  };
+  const targetState = parentArchive.materialize(year);
+  if (!targetState) throw new Error(`Artifact cannot materialize Year ${year}`);
   const intervention: TimelineIntervention = {
-    interventionId: `cli_suppress_${target}_${year}`,
+    interventionId: argument("intervention", `cli_suppress_${target}_${year}`)!,
     parentBranchId: source.provenance.branchId,
     newBranchId: argument("branch", `branch-${year}`)!,
     insertionYear: year,
@@ -97,22 +114,50 @@ async function branch(): Promise<void> {
     operation: "suppress_event",
     parameters: {},
   };
-  const endYear = Number(argument("years", String(source.provenance.endYear)));
-  const result = resimulateBranch(parentBranch, parentLedger, intervention, endYear);
-  const first = result.cachedStates[year];
-  if (!first) throw new Error("Branch produced no state at intervention year");
-  const archive = TimelineArchive.create(intervention.newBranchId, first);
-  for (let cursor = year + 1; cursor <= endYear; cursor++) {
-    const next = result.cachedStates[cursor];
-    if (next) archive.record(next, result.branch.yearHashes[cursor]);
+  const validation = validateIntervention(intervention, {
+    state: targetState,
+    minYear: source.archive.minYear,
+    maxYear: source.archive.maxYear,
+    existingBranchIds: [source.provenance.branchId],
+  });
+  if (!validation.valid) throw new Error(`Invalid intervention: ${validation.errors.join("; ")}`);
+  if (validation.warnings.length > 0 && !hasFlag("allow-warnings")) {
+    throw new Error(`Intervention warnings: ${validation.warnings.join("; ")}; pass --allow-warnings to continue`);
   }
+
+  const result = runBranchArchive({
+    parentArchive: source.archive,
+    parentEvents: source.events,
+    intervention,
+    endYear,
+  });
   const artifact = createSimulationArtifact({
-    archive: archive.serialize(),
+    archive: result.archive,
     events: result.ledger.exportEvents(),
     intervention,
+    replayVerified: true,
   });
-  await writeFile(output, serializeSimulationArtifact(artifact), "utf8");
-  console.log(JSON.stringify({ command: "branch", output, branchId: intervention.newBranchId }, null, 2));
+  await writeArtifact(output, serializeSimulationArtifact(artifact));
+  console.log(JSON.stringify({
+    command: "branch",
+    input,
+    output,
+    branchId: intervention.newBranchId,
+    parentBranchId: intervention.parentBranchId,
+    interventionYear: year,
+    endYear,
+    warnings: validation.warnings,
+    finalHash: result.branch.yearHashes[endYear],
+  }, null, 2));
+}
+
+function usage(): string {
+  return [
+    "Usage:",
+    "  npm run cli -- simulate [--seed SEED] [--years N] [--checkpoint N] [--output FILE] [--force]",
+    "  npm run cli -- verify --input FILE",
+    "  npm run cli -- branch --input FILE --output FILE --target ID [--year N] [--years N] [--branch ID] [--allow-warnings] [--force]",
+  ].join("\n");
 }
 
 async function main(): Promise<void> {
@@ -120,7 +165,11 @@ async function main(): Promise<void> {
   if (command === "simulate") return simulate();
   if (command === "verify") return verify();
   if (command === "branch") return branch();
-  throw new Error("Usage: npm run cli -- <simulate|verify|branch> [options]");
+  if (command === "help" || command === "--help" || command === "-h") {
+    console.log(usage());
+    return;
+  }
+  throw new Error(usage());
 }
 
 main().catch(error => {
