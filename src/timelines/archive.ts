@@ -1,5 +1,6 @@
 import type { WorldState } from "../core/types";
 import { deterministicHash } from "../core/hashing";
+import { assertValidTimelineArchive, isSafePatchPath } from "./archiveValidation";
 
 export const TIMELINE_ARCHIVE_VERSION = 1;
 
@@ -118,12 +119,14 @@ function createPatch(
     const afterRecord = after as Record<string, unknown>;
     const keys = new Set([...Object.keys(beforeRecord), ...Object.keys(afterRecord)]);
     for (const key of keys) {
+      const nextPath = [...path, key];
+      if (!isSafePatchPath(nextPath)) throw new Error(`Cannot archive unsafe state path ${nextPath.join(".")}`);
       if (!(key in afterRecord)) {
-        operations.push({ op: "delete", path: [...path, key] });
+        operations.push({ op: "delete", path: nextPath });
       } else if (!(key in beforeRecord)) {
-        operations.push({ op: "set", path: [...path, key], value: clone(afterRecord[key]) });
+        operations.push({ op: "set", path: nextPath, value: clone(afterRecord[key]) });
       } else {
-        createPatch(beforeRecord[key], afterRecord[key], [...path, key], operations);
+        createPatch(beforeRecord[key], afterRecord[key], nextPath, operations);
       }
     }
     return operations;
@@ -136,6 +139,7 @@ function createPatch(
 function applyPatch<T>(source: T, operations: StatePatchOperation[]): T {
   const target = clone(source) as unknown as Record<string | number, unknown>;
   for (const operation of operations) {
+    if (!isSafePatchPath(operation.path)) throw new Error("Archive contains an unsafe patch path");
     if (operation.path.length === 0) {
       if (operation.op === "delete") throw new Error("Cannot delete archive root");
       return clone(operation.value) as T;
@@ -145,7 +149,7 @@ function applyPatch<T>(source: T, operations: StatePatchOperation[]): T {
       const segment = operation.path[index];
       const next = cursor[segment];
       if (!next || typeof next !== "object") {
-        cursor[segment] = typeof operation.path[index + 1] === "number" ? [] : {};
+        cursor[segment] = typeof operation.path[index + 1] === "number" ? [] : Object.create(null);
       }
       cursor = cursor[segment] as Record<string | number, unknown>;
     }
@@ -169,9 +173,7 @@ export class TimelineArchive {
   private readonly lruCapacity: number;
 
   constructor(serialized: SerializedTimelineArchive, lruCapacity = 8) {
-    if (serialized.version !== TIMELINE_ARCHIVE_VERSION) {
-      throw new Error(`Unsupported timeline archive version ${serialized.version}`);
-    }
+    assertValidTimelineArchive(serialized);
     this.archive = clone(serialized);
     this.lruCapacity = Math.max(2, lruCapacity);
   }
@@ -205,7 +207,7 @@ export class TimelineArchive {
   }
 
   materialize(year: number): WorldState | undefined {
-    if (year < this.minYear || year > this.maxYear) return undefined;
+    if (!Number.isInteger(year) || year < this.minYear || year > this.maxYear) return undefined;
     const cached = this.materialized.get(year);
     if (cached) {
       this.touch(year, cached);
@@ -225,6 +227,11 @@ export class TimelineArchive {
       else dynamicState = applyPatch(dynamicState, this.archive.deltas[cursor] ?? []);
     }
     const state = joinWorldState(this.archive.staticState, dynamicState);
+    const expectedHash = this.archive.yearHashes[year];
+    const actualHash = deterministicHash(state);
+    if (actualHash !== expectedHash) {
+      throw new Error(`Archive replay hash mismatch at Year ${year}: ${actualHash} != ${expectedHash}`);
+    }
     this.touch(year, state);
     return clone(state);
   }
@@ -245,12 +252,16 @@ export class TimelineArchiveBuilder {
   private previousDynamic: DynamicWorldState;
 
   constructor(branchId: string, initialState: WorldState, checkpointInterval = 25) {
+    if (!branchId.trim()) throw new Error("Archive branchId is required");
+    if (!Number.isInteger(checkpointInterval) || checkpointInterval < 1) {
+      throw new Error("Checkpoint interval must be a positive integer");
+    }
     const { staticState, dynamicState } = splitWorldState(initialState);
     this.previousDynamic = clone(dynamicState);
     this.serialized = {
       version: TIMELINE_ARCHIVE_VERSION,
       branchId,
-      checkpointInterval: Math.max(1, checkpointInterval),
+      checkpointInterval,
       staticState,
       checkpoints: { [initialState.year]: clone(dynamicState) },
       deltas: {},
@@ -266,16 +277,16 @@ export class TimelineArchiveBuilder {
       throw new Error("Static geography changed; archive cannot silently rewrite its base world");
     }
     const year = state.year;
-    if (year !== this.serialized.maxYear + 1 && year !== this.serialized.minYear) {
-      throw new Error(`Timeline archive requires sequential years; received ${year}`);
+    if (year !== this.serialized.maxYear + 1) {
+      throw new Error(`Timeline archive requires the next sequential year ${this.serialized.maxYear + 1}; received ${year}`);
     }
-    if (year % this.serialized.checkpointInterval === 0 || year === this.serialized.minYear) {
+    if (year % this.serialized.checkpointInterval === 0) {
       this.serialized.checkpoints[year] = clone(dynamicState);
     } else {
       this.serialized.deltas[year] = createPatch(this.previousDynamic, dynamicState);
     }
     this.serialized.yearHashes[year] = hash;
-    this.serialized.maxYear = Math.max(this.serialized.maxYear, year);
+    this.serialized.maxYear = year;
     this.previousDynamic = clone(dynamicState);
   }
 
@@ -284,6 +295,7 @@ export class TimelineArchiveBuilder {
   }
 
   serialize(): SerializedTimelineArchive {
+    assertValidTimelineArchive(this.serialized);
     return clone(this.serialized);
   }
 }
