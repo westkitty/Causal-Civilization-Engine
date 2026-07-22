@@ -4,7 +4,11 @@ import type { HistoricalEvent } from "./types";
 
 export const WORKER_PROTOCOL_VERSION = 1;
 
-export interface RunBaselineRequest {
+interface CancellableRequest {
+  cancellationBuffer?: SharedArrayBuffer;
+}
+
+export interface RunBaselineRequest extends CancellableRequest {
   version: number;
   type: "RUN_BASELINE";
   requestId: number;
@@ -13,7 +17,7 @@ export interface RunBaselineRequest {
   checkpointInterval?: number;
 }
 
-export interface RunBranchRequest {
+export interface RunBranchRequest extends CancellableRequest {
   version: number;
   type: "RUN_BRANCH";
   requestId: number;
@@ -53,21 +57,58 @@ export function assertWorkerProtocolVersion(version: number): void {
   }
 }
 
+export interface WorkerCancellationHandle {
+  buffer: SharedArrayBuffer;
+  cancel(): void;
+  reset(): void;
+  isCancelled(): boolean;
+}
+
+export function createWorkerCancellationHandle(): WorkerCancellationHandle | undefined {
+  if (typeof SharedArrayBuffer === "undefined") return undefined;
+  const buffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+  const view = new Int32Array(buffer);
+  return {
+    buffer,
+    cancel: () => { Atomics.store(view, 0, 1); },
+    reset: () => { Atomics.store(view, 0, 0); },
+    isCancelled: () => Atomics.load(view, 0) === 1,
+  };
+}
+
 export class CooperativeCancellation {
   private cancelled = new Set<number>();
+  private sharedFlags = new Map<number, Int32Array>();
+
+  register(requestId: number, buffer?: SharedArrayBuffer): void {
+    if (buffer) this.sharedFlags.set(requestId, new Int32Array(buffer));
+  }
 
   cancel(requestId: number): void {
     this.cancelled.add(requestId);
+    const flag = this.sharedFlags.get(requestId);
+    if (flag) Atomics.store(flag, 0, 1);
   }
 
-  reset(requestId: number): void {
+  reset(requestId: number, buffer?: SharedArrayBuffer): void {
     this.cancelled.delete(requestId);
+    this.sharedFlags.delete(requestId);
+    this.register(requestId, buffer);
+  }
+
+  release(requestId: number): void {
+    this.cancelled.delete(requestId);
+    this.sharedFlags.delete(requestId);
+  }
+
+  isCancelled(requestId: number): boolean {
+    if (this.cancelled.has(requestId)) return true;
+    const flag = this.sharedFlags.get(requestId);
+    return flag ? Atomics.load(flag, 0) === 1 : false;
   }
 
   throwIfCancelled(requestId: number): void {
-    if (this.cancelled.has(requestId)) {
-      throw new SimulationCancelledError(requestId);
-    }
+    if (this.isCancelled(requestId)) throw new SimulationCancelledError(requestId);
   }
 }
 
