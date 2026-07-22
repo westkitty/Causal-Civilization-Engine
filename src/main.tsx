@@ -5,12 +5,7 @@ import './visual-overhaul.css'
 import './map-observatory.css'
 import './map-scan-effects.css'
 import './observatory-shell.css'
+import './rendering/standardOrbitControlsPolicy'
 import './rendering/instancedMeshUploadPolicy'
 import './rendering/rendererVisualPolicy'
-import App from './App.tsx'
-
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+import App
