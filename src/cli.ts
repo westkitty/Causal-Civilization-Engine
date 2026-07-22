@@ -1,6 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
-import { runFullSimulation, resimulateBranch } from "./core/runner";
+import { resimulateBranch } from "./core/runner";
+import { simulateYear } from "./core/scheduler";
+import { generateWorld } from "./geography/terrain";
 import { Branch } from "./timelines/branch";
 import type { TimelineIntervention } from "./timelines/branch";
 import { CausalLedger } from "./timelines/ledger";
@@ -24,24 +26,16 @@ async function simulate(): Promise<void> {
   const output = argument("output", `cce-${seed}-${endYear}.json`)!;
   const branch = new Branch("main");
   const ledger = new CausalLedger("main");
+  const state = generateWorld(seed, 125, 125);
   const started = performance.now();
-  runFullSimulation(seed, branch, ledger, 0);
-  const initial = branch.snapshots[0]?.state;
-  if (!initial) throw new Error("Simulation did not create a Year-0 snapshot");
-  const archive = TimelineArchive.create("main", initial);
-  let state = initial;
-  if (endYear > 0) {
-    const resultBranch = new Branch("main");
-    const resultLedger = new CausalLedger("main");
-    state = runFullSimulation(seed, resultBranch, resultLedger, endYear);
-    for (let year = 1; year <= endYear; year++) {
-      const snapshot = resultBranch.snapshots[year]?.state;
-      if (snapshot) archive.record(snapshot, resultBranch.yearHashes[year]);
-    }
-    // The CLI records available checkpoints. Full per-year archive generation is
-    // owned by the Worker runner; this path remains useful for deterministic batch checks.
-    ledger.importEvents(resultLedger.exportEvents());
+
+  simulateYear(state, ledger, branch, 0);
+  const archive = TimelineArchive.create("main", state);
+  for (let year = 1; year <= endYear; year++) {
+    simulateYear(state, ledger, branch, year);
+    archive.record(state, branch.yearHashes[year]);
   }
+
   const artifact = createSimulationArtifact({
     archive: archive.serialize(),
     events: ledger.exportEvents(),
@@ -52,7 +46,7 @@ async function simulate(): Promise<void> {
     seed,
     endYear,
     output,
-    finalHash: branch.yearHashes[endYear] ?? branch.yearHashes[0],
+    finalHash: branch.yearHashes[endYear],
     elapsedMs: Math.round(performance.now() - started),
     finalStateYear: state.year,
   }, null, 2));
@@ -61,6 +55,9 @@ async function simulate(): Promise<void> {
 async function verify(): Promise<void> {
   const input = required("input");
   const artifact = parseSimulationArtifact(await readFile(input, "utf8"));
+  const archive = TimelineArchive.deserialize(artifact.archive);
+  const finalState = archive.materialize(artifact.provenance.endYear);
+  if (!finalState) throw new Error("Artifact final state cannot be materialized");
   console.log(JSON.stringify({
     command: "verify",
     input,
@@ -68,6 +65,7 @@ async function verify(): Promise<void> {
     seed: artifact.provenance.seed,
     years: [artifact.provenance.startYear, artifact.provenance.endYear],
     finalHash: artifact.provenance.finalStateHash,
+    finalStateYear: finalState.year,
     status: "valid",
   }, null, 2));
 }
@@ -99,11 +97,12 @@ async function branch(): Promise<void> {
     operation: "suppress_event",
     parameters: {},
   };
-  const result = resimulateBranch(parentBranch, parentLedger, intervention, Number(argument("years", String(source.provenance.endYear))));
+  const endYear = Number(argument("years", String(source.provenance.endYear)));
+  const result = resimulateBranch(parentBranch, parentLedger, intervention, endYear);
   const first = result.cachedStates[year];
   if (!first) throw new Error("Branch produced no state at intervention year");
   const archive = TimelineArchive.create(intervention.newBranchId, first);
-  for (let cursor = year + 1; cursor <= source.provenance.endYear; cursor++) {
+  for (let cursor = year + 1; cursor <= endYear; cursor++) {
     const next = result.cachedStates[cursor];
     if (next) archive.record(next, result.branch.yearHashes[cursor]);
   }
